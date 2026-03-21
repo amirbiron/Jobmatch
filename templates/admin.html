@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>פאנל ניהול — JobMatch</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .admin-section {
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 24px; margin-bottom: 20px;
+        }
+        .admin-section h2 { font-size: 1.1rem; margin-bottom: 16px; }
+        .scan-status {
+            display: flex; align-items: center; gap: 12px;
+            padding: 12px 16px; border-radius: var(--radius-sm); margin-bottom: 12px;
+        }
+        .scan-status.running { background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.3); }
+        .scan-status.done { background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); }
+        .scan-status.error { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); }
+        .scan-status.idle { background: var(--bg-input); border: 1px solid var(--border); }
+        .user-row {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 12px 0; border-bottom: 1px solid var(--border);
+        }
+        .user-row:last-child { border-bottom: none; }
+        .alert-item {
+            padding: 12px; margin-bottom: 8px; border-radius: var(--radius-sm);
+            background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2);
+            font-size: 0.85rem;
+        }
+        .alert-item .alert-time { color: var(--text-muted); font-size: 0.75rem; margin-top: 4px; }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <a href="/" class="navbar-brand">⚡ JobMatch</a>
+        <div class="navbar-links">
+            <a href="/dashboard">דשבורד</a>
+            <a href="#" onclick="API.logout()">התנתקות</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="section-header"><h1>👑 פאנל ניהול</h1></div>
+        
+        <div class="error-msg" id="errorMsg"></div>
+
+        <!-- Stats -->
+        <div class="stats-grid">
+            <div class="stat-card"><div class="stat-value" id="aUsers">0</div><div class="stat-label">משתמשים</div></div>
+            <div class="stat-card"><div class="stat-value" id="aCandidates">0</div><div class="stat-label">מועמדים פעילים</div></div>
+            <div class="stat-card"><div class="stat-value" id="aPosts">0</div><div class="stat-label">פוסטים נסרקו</div></div>
+            <div class="stat-card"><div class="stat-value" id="aMatches">0</div><div class="stat-label">התאמות</div></div>
+            <div class="stat-card"><div class="stat-value" id="aSent">0</div><div class="stat-label">נשלחו</div></div>
+            <div class="stat-card"><div class="stat-value" id="aFailed">0</div><div class="stat-label">נכשלו</div></div>
+        </div>
+
+        <!-- Scanner -->
+        <div class="admin-section">
+            <h2>🔍 סורק פייסבוק</h2>
+            <div class="scan-status idle" id="scanStatus">
+                <span id="scanIcon">⏸️</span>
+                <div>
+                    <div id="scanText">לא הופעל עדיין</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);" id="scanMeta"></div>
+                </div>
+            </div>
+            <button class="btn btn-primary" style="width:auto;padding:10px 24px;" id="triggerBtn" onclick="triggerScan()">
+                ▶️ הפעלת סריקה ידנית
+            </button>
+        </div>
+
+        <!-- Alerts -->
+        <div class="admin-section">
+            <h2>⚠️ התראות מערכת</h2>
+            <div id="alertsList"></div>
+            <div id="noAlerts" style="color:var(--text-muted);font-size:0.9rem;">אין התראות</div>
+        </div>
+
+        <!-- Users -->
+        <div class="admin-section">
+            <h2>👥 משתמשים</h2>
+            <div id="usersList"></div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+    <script>
+        if (!API.requireAuth()) {}
+
+        async function loadAdmin() {
+            try {
+                // Stats
+                const stats = await API.get('/admin/stats');
+                document.getElementById('aUsers').textContent = stats.total_users;
+                document.getElementById('aCandidates').textContent = stats.total_candidates;
+                document.getElementById('aPosts').textContent = stats.total_posts_scanned;
+                document.getElementById('aMatches').textContent = stats.total_matches;
+                document.getElementById('aSent').textContent = stats.matches_sent;
+                document.getElementById('aFailed').textContent = stats.matches_failed;
+            } catch (e) {
+                showError('errorMsg', 'אין גישת אדמין או שגיאת שרת');
+                return;
+            }
+
+            loadScanStatus();
+            loadAlerts();
+            loadUsers();
+        }
+
+        async function loadScanStatus() {
+            try {
+                const s = await API.get('/admin/scan/status');
+                const el = document.getElementById('scanStatus');
+                const icon = document.getElementById('scanIcon');
+                const text = document.getElementById('scanText');
+                const meta = document.getElementById('scanMeta');
+
+                el.className = 'scan-status ' + (s.last_status || 'idle');
+
+                const statusMap = {
+                    'idle': ['⏸️', 'לא הופעל'],
+                    'running': ['🔄', 'סורק עכשיו...'],
+                    'done': ['✅', 'סריקה הושלמה'],
+                    'done_empty': ['📭', 'סריקה הושלמה — בלי פוסטים חדשים'],
+                    'error': ['❌', 'שגיאה בסריקה']
+                };
+                const [ic, tx] = statusMap[s.last_status] || ['❓', s.last_status];
+                icon.textContent = ic;
+                text.textContent = tx;
+
+                let metaText = '';
+                if (s.last_run) metaText += `הרצה אחרונה: ${new Date(s.last_run).toLocaleString('he-IL')}`;
+                if (s.posts_found) metaText += ` · ${s.posts_found} פוסטים`;
+                if (s.matches_found) metaText += ` · ${s.matches_found} התאמות חדשות`;
+                if (s.last_error) metaText += ` · שגיאה: ${s.last_error}`;
+                meta.textContent = metaText;
+            } catch (e) {}
+        }
+
+        async function triggerScan() {
+            const btn = document.getElementById('triggerBtn');
+            showLoading(btn, '🔄 מתחיל...');
+            try {
+                await API.post('/admin/scan/trigger', {});
+                setTimeout(() => { loadScanStatus(); hideLoading(btn); }, 2000);
+            } catch (e) {
+                showError('errorMsg', e.message);
+                hideLoading(btn);
+            }
+        }
+
+        async function loadAlerts() {
+            try {
+                const data = await API.get('/admin/alerts');
+                const list = document.getElementById('alertsList');
+                const noAlerts = document.getElementById('noAlerts');
+                list.innerHTML = '';
+                if (!data.alerts.length) { noAlerts.style.display = 'block'; return; }
+                noAlerts.style.display = 'none';
+                data.alerts.forEach(a => {
+                    const div = document.createElement('div');
+                    div.className = 'alert-item';
+                    div.innerHTML = `<div>${a.message}</div><div class="alert-time">${new Date(a.created_at).toLocaleString('he-IL')}</div>`;
+                    list.appendChild(div);
+                });
+            } catch (e) {}
+        }
+
+        async function loadUsers() {
+            try {
+                const data = await API.get('/admin/users');
+                const list = document.getElementById('usersList');
+                list.innerHTML = '';
+                data.users.forEach(u => {
+                    const div = document.createElement('div');
+                    div.className = 'user-row';
+                    div.innerHTML = `
+                        <div>
+                            <strong>${u.name}</strong>
+                            <span style="color:var(--text-muted);font-size:0.85rem;margin-right:8px;">${u.email}</span>
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <span class="badge ${u.has_cv ? 'badge-sent' : 'badge-pending'}">${u.has_cv ? 'קו"ח ✓' : 'ללא קו"ח'}</span>
+                            <span style="color:var(--text-muted);font-size:0.75rem;">${new Date(u.created_at).toLocaleDateString('he-IL')}</span>
+                        </div>`;
+                    list.appendChild(div);
+                });
+            } catch (e) {}
+        }
+
+        loadAdmin();
+    </script>
+</body>
+</html>
