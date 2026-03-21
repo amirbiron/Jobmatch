@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>תצוגה מקדימה — JobMatch</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <a href="/" class="navbar-brand">⚡ JobMatch</a>
+        <div class="navbar-links">
+            <a href="/dashboard">דשבורד</a>
+            <a href="#" onclick="API.logout()">התנתקות</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="section-header">
+            <h1>🔍 בדוק את הפרטים</h1>
+            <p style="color:var(--text-secondary);margin-top:8px;">ה-AI חילץ את המידע הזה מקורות החיים שלך — ודא שהכל נכון</p>
+        </div>
+
+        <div class="error-msg" id="errorMsg"></div>
+
+        <!-- Personal Info -->
+        <div class="preview-section">
+            <h3>פרטים אישיים</h3>
+            <div class="preview-field">
+                <span class="field-label">שם מלא</span>
+                <span class="field-value" id="pName">—</span>
+            </div>
+            <div class="preview-field">
+                <span class="field-label">מייל</span>
+                <span class="field-value" id="pEmail">—</span>
+            </div>
+            <div class="preview-field">
+                <span class="field-label">טלפון</span>
+                <span class="field-value" id="pPhone">—</span>
+            </div>
+            <div class="preview-field">
+                <span class="field-label">מיקום</span>
+                <span class="field-value" id="pLocation">—</span>
+            </div>
+        </div>
+
+        <!-- Professional -->
+        <div class="preview-section">
+            <h3>מקצועי</h3>
+            <div class="preview-field">
+                <span class="field-label">תפקיד נוכחי</span>
+                <span class="field-value" id="pTitle">—</span>
+            </div>
+            <div class="preview-field">
+                <span class="field-label">שנות ניסיון</span>
+                <span class="field-value" id="pYears">—</span>
+            </div>
+            <div class="preview-field">
+                <span class="field-label">השכלה</span>
+                <span class="field-value" id="pEducation">—</span>
+            </div>
+        </div>
+
+        <!-- Skills -->
+        <div class="preview-section">
+            <h3>כישורים</h3>
+            <div class="skills-list" id="pSkills"></div>
+        </div>
+
+        <!-- Summary -->
+        <div class="preview-section">
+            <h3>סיכום</h3>
+            <p id="pSummary" style="color:var(--text-secondary);line-height:1.7;">—</p>
+        </div>
+
+        <!-- Experience -->
+        <div class="preview-section" id="experienceSection" style="display:none;">
+            <h3>ניסיון תעסוקתי</h3>
+            <div id="pExperience"></div>
+        </div>
+
+        <div style="display:flex;gap:12px;margin:24px 0 48px;">
+            <button class="btn btn-primary" id="confirmBtn" onclick="handleConfirm()">
+                ✅ אישור והמשך להעדפות
+            </button>
+            <a href="/upload" class="btn btn-outline" style="text-decoration:none;text-align:center;">
+                🔄 העלאה מחדש
+            </a>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+    <script>
+        if (!API.requireAuth()) {}
+        
+        let previewData = null;
+        
+        async function loadPreview() {
+            // Try sessionStorage first (from upload redirect)
+            const cached = sessionStorage.getItem('cv_preview');
+            if (cached) {
+                previewData = JSON.parse(cached);
+                renderPreview(previewData);
+                return;
+            }
+            
+            // Otherwise fetch from API
+            try {
+                const data = await API.get('/cv/preview');
+                previewData = data.parsed;
+                renderPreview(previewData);
+            } catch (err) {
+                showError('errorMsg', 'לא נמצאה תצוגה מקדימה — העלה קו"ח קודם');
+            }
+        }
+        
+        function renderPreview(p) {
+            document.getElementById('pName').textContent = p.full_name || '—';
+            document.getElementById('pEmail').textContent = p.email || '—';
+            document.getElementById('pPhone').textContent = p.phone || '—';
+            document.getElementById('pLocation').textContent = p.location || '—';
+            document.getElementById('pTitle').textContent = p.current_title || '—';
+            document.getElementById('pYears').textContent = p.experience_years ? `${p.experience_years} שנים` : '—';
+            document.getElementById('pEducation').textContent = p.education || '—';
+            document.getElementById('pSummary').textContent = p.summary || '—';
+            
+            // Skills
+            const skillsEl = document.getElementById('pSkills');
+            skillsEl.innerHTML = '';
+            (p.skills || []).forEach(s => {
+                const tag = document.createElement('span');
+                tag.className = 'skill-tag';
+                tag.textContent = s;
+                skillsEl.appendChild(tag);
+            });
+            
+            // Experience
+            if (p.experience && p.experience.length > 0) {
+                document.getElementById('experienceSection').style.display = 'block';
+                const expEl = document.getElementById('pExperience');
+                expEl.innerHTML = '';
+                p.experience.forEach(exp => {
+                    const div = document.createElement('div');
+                    div.style.cssText = 'padding:12px 0;border-bottom:1px solid var(--border);';
+                    div.innerHTML = `
+                        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                            <strong>${exp.title || ''}</strong>
+                            <span style="color:var(--text-muted);font-size:0.85rem;">${exp.duration || ''}</span>
+                        </div>
+                        <div style="color:var(--accent);font-size:0.9rem;">${exp.company || ''}</div>
+                        <div style="color:var(--text-secondary);font-size:0.85rem;margin-top:4px;">${exp.description || ''}</div>
+                    `;
+                    expEl.appendChild(div);
+                });
+            }
+        }
+        
+        async function handleConfirm() {
+            const btn = document.getElementById('confirmBtn');
+            showLoading(btn, 'שומר...');
+            
+            try {
+                await API.post('/cv/confirm', {});
+                sessionStorage.removeItem('cv_preview');
+                window.location.href = '/preferences';
+            } catch (err) {
+                showError('errorMsg', err.message);
+            } finally {
+                hideLoading(btn);
+            }
+        }
+        
+        loadPreview();
+    </script>
+</body>
+</html>
