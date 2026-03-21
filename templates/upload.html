@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>העלאת קו"ח — JobMatch</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <a href="/" class="navbar-brand">⚡ JobMatch</a>
+        <div class="navbar-links">
+            <a href="/dashboard">דשבורד</a>
+            <a href="#" onclick="API.logout()">התנתקות</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="section-header">
+            <h1>📄 העלאת קורות חיים</h1>
+            <p style="color:var(--text-secondary);margin-top:8px;">PDF בלבד — ה-AI יחלץ את המידע אוטומטית</p>
+        </div>
+
+        <div class="error-msg" id="errorMsg"></div>
+
+        <div class="upload-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+            <div class="icon">📁</div>
+            <div class="label">לחץ כאן או גרור קובץ PDF</div>
+            <div class="hint">עד 10MB</div>
+            <div id="fileName" style="color:var(--accent);margin-top:12px;font-weight:500;display:none;"></div>
+        </div>
+        
+        <input type="file" id="fileInput" accept=".pdf" style="display:none">
+        
+        <button class="btn btn-primary mt-24" id="uploadBtn" onclick="handleUpload()" disabled>
+            🤖 ניתוח קורות החיים
+        </button>
+        
+        <div id="progressMsg" style="text-align:center;color:var(--text-secondary);margin-top:16px;display:none;">
+            ⏳ מנתח את קורות החיים... זה יכול לקחת כמה שניות
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+    <script>
+        if (!API.requireAuth()) {}
+        
+        let selectedFile = null;
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const fileNameEl = document.getElementById('fileName');
+        
+        // File selection
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files[0]) selectFile(e.target.files[0]);
+        });
+        
+        // Drag & drop
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files[0]) selectFile(e.dataTransfer.files[0]);
+        });
+        
+        function selectFile(file) {
+            if (!file.name.toLowerCase().endsWith('.pdf')) {
+                showError('errorMsg', 'רק קבצי PDF מתקבלים');
+                return;
+            }
+            selectedFile = file;
+            fileNameEl.textContent = `📎 ${file.name}`;
+            fileNameEl.style.display = 'block';
+            uploadBtn.disabled = false;
+            hideError('errorMsg');
+        }
+        
+        async function handleUpload() {
+            if (!selectedFile) return;
+            hideError('errorMsg');
+            showLoading(uploadBtn, '🤖 מנתח...');
+            document.getElementById('progressMsg').style.display = 'block';
+            
+            try {
+                const formData = new FormData();
+                formData.append('file', selectedFile);
+                
+                const data = await API.upload('/cv/upload', formData);
+                
+                // Store preview data and redirect
+                sessionStorage.setItem('cv_preview', JSON.stringify(data.preview));
+                window.location.href = '/preview';
+            } catch (err) {
+                showError('errorMsg', err.message);
+                document.getElementById('progressMsg').style.display = 'none';
+            } finally {
+                hideLoading(uploadBtn);
+            }
+        }
+    </script>
+</body>
+</html>
