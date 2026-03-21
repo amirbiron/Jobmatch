@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>העדפות — JobMatch</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <a href="/" class="navbar-brand">⚡ JobMatch</a>
+        <div class="navbar-links">
+            <a href="/dashboard">דשבורד</a>
+            <a href="#" onclick="API.logout()">התנתקות</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="section-header">
+            <h1>⚙️ העדפות חיפוש</h1>
+            <p style="color:var(--text-secondary);margin-top:8px;">ספר לנו מה אתה מחפש — נסנן את ההתאמות בהתאם</p>
+        </div>
+
+        <div class="error-msg" id="errorMsg"></div>
+        <div class="success-msg" id="successMsg" style="display:none;"></div>
+
+        <!-- Job Fields -->
+        <div class="preview-section">
+            <h3>תחומי עבודה</h3>
+            <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:12px;">הקלד תחום ולחץ Enter</p>
+            <div class="tags-container" id="fieldsContainer" onclick="this.querySelector('input').focus()">
+                <input type="text" id="fieldsInput" placeholder="לדוגמה: פיתוח, שיווק, עיצוב...">
+            </div>
+        </div>
+
+        <!-- Locations -->
+        <div class="preview-section">
+            <h3>אזורי עבודה</h3>
+            <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:12px;">איפה מתאים לך לעבוד?</p>
+            <div class="tags-container" id="locationsContainer" onclick="this.querySelector('input').focus()">
+                <input type="text" id="locationsInput" placeholder="לדוגמה: תל אביב, מרכז, עבודה מהבית...">
+            </div>
+        </div>
+
+        <!-- Job Types -->
+        <div class="preview-section">
+            <h3>סוג משרה</h3>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;" id="jobTypes">
+                <label class="chip-label"><input type="checkbox" value="משרה מלאה"> משרה מלאה</label>
+                <label class="chip-label"><input type="checkbox" value="משרה חלקית"> משרה חלקית</label>
+                <label class="chip-label"><input type="checkbox" value="פרילנס"> פרילנס</label>
+                <label class="chip-label"><input type="checkbox" value="התמחות"> התמחות</label>
+                <label class="chip-label"><input type="checkbox" value="עבודה מהבית"> עבודה מהבית</label>
+                <label class="chip-label"><input type="checkbox" value="הייבריד"> הייבריד</label>
+            </div>
+        </div>
+
+        <!-- Keywords -->
+        <div class="preview-section">
+            <h3>מילות מפתח נוספות (אופציונלי)</h3>
+            <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:12px;">מילים שחשוב שיופיעו במשרה</p>
+            <div class="tags-container" id="keywordsContainer" onclick="this.querySelector('input').focus()">
+                <input type="text" id="keywordsInput" placeholder="לדוגמה: Python, ג'וניור, hybrid...">
+            </div>
+        </div>
+
+        <!-- Match Score -->
+        <div class="preview-section">
+            <h3>סף התאמה מינימלי</h3>
+            <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:12px;">ישלח קו"ח רק כשציון ההתאמה מעל הסף</p>
+            <div style="display:flex;align-items:center;gap:16px;">
+                <input type="range" id="matchScore" min="40" max="90" value="65" 
+                    style="flex:1;accent-color:var(--accent);"
+                    oninput="document.getElementById('scoreValue').textContent=this.value+'%'">
+                <span id="scoreValue" style="font-size:1.3rem;font-weight:700;color:var(--accent);min-width:50px;">65%</span>
+            </div>
+        </div>
+
+        <button class="btn btn-primary mt-24" id="saveBtn" onclick="handleSave()" style="margin-bottom:48px;">
+            💾 שמירה → לדשבורד
+        </button>
+    </div>
+
+    <style>
+        .chip-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            user-select: none;
+        }
+        .chip-label:has(input:checked) {
+            background: var(--accent-glow);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .chip-label input { display: none; }
+    </style>
+
+    <script src="/static/js/app.js"></script>
+    <script>
+        if (!API.requireAuth()) {}
+        
+        // === Tags Input Logic ===
+        const tagsData = {
+            fields: [],
+            locations: [],
+            keywords: []
+        };
+        
+        function setupTagsInput(inputId, containerId, dataKey) {
+            const input = document.getElementById(inputId);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && input.value.trim()) {
+                    e.preventDefault();
+                    const val = input.value.trim();
+                    if (!tagsData[dataKey].includes(val)) {
+                        tagsData[dataKey].push(val);
+                        renderTags(containerId, dataKey);
+                    }
+                    input.value = '';
+                }
+            });
+        }
+        
+        function renderTags(containerId, dataKey) {
+            const container = document.getElementById(containerId);
+            const input = container.querySelector('input');
+            
+            // Remove old tags
+            container.querySelectorAll('.tag').forEach(t => t.remove());
+            
+            // Add tags before input
+            tagsData[dataKey].forEach((val, idx) => {
+                const tag = document.createElement('span');
+                tag.className = 'tag';
+                tag.innerHTML = `${val} <span class="remove" onclick="removeTag('${dataKey}','${containerId}',${idx})">×</span>`;
+                container.insertBefore(tag, input);
+            });
+        }
+        
+        function removeTag(dataKey, containerId, idx) {
+            tagsData[dataKey].splice(idx, 1);
+            renderTags(containerId, dataKey);
+        }
+        
+        setupTagsInput('fieldsInput', 'fieldsContainer', 'fields');
+        setupTagsInput('locationsInput', 'locationsContainer', 'locations');
+        setupTagsInput('keywordsInput', 'keywordsContainer', 'keywords');
+        
+        // === Load Existing Preferences ===
+        async function loadPrefs() {
+            try {
+                const data = await API.get('/dashboard/preferences');
+                if (data.job_fields?.length) {
+                    tagsData.fields = data.job_fields;
+                    renderTags('fieldsContainer', 'fields');
+                }
+                if (data.locations?.length) {
+                    tagsData.locations = data.locations;
+                    renderTags('locationsContainer', 'locations');
+                }
+                if (data.keywords?.length) {
+                    tagsData.keywords = data.keywords;
+                    renderTags('keywordsContainer', 'keywords');
+                }
+                if (data.job_types?.length) {
+                    document.querySelectorAll('#jobTypes input').forEach(cb => {
+                        if (data.job_types.includes(cb.value)) cb.checked = true;
+                    });
+                }
+                if (data.min_match_score) {
+                    document.getElementById('matchScore').value = data.min_match_score;
+                    document.getElementById('scoreValue').textContent = data.min_match_score + '%';
+                }
+            } catch (e) {}
+        }
+        
+        // === Save ===
+        async function handleSave() {
+            hideError('errorMsg');
+            const btn = document.getElementById('saveBtn');
+            showLoading(btn, 'שומר...');
+            
+            const jobTypes = [];
+            document.querySelectorAll('#jobTypes input:checked').forEach(cb => jobTypes.push(cb.value));
+            
+            try {
+                await API.put('/dashboard/preferences', {
+                    job_fields: tagsData.fields,
+                    locations: tagsData.locations,
+                    job_types: jobTypes,
+                    keywords: tagsData.keywords,
+                    min_match_score: parseInt(document.getElementById('matchScore').value)
+                });
+                
+                window.location.href = '/dashboard';
+            } catch (err) {
+                showError('errorMsg', err.message);
+            } finally {
+                hideLoading(btn);
+            }
+        }
+        
+        loadPrefs();
+    </script>
+</body>
+</html>
