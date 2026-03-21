@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>הרשמה — JobMatch</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <a href="/" class="navbar-brand">⚡ JobMatch</a>
+        <div class="navbar-links">
+            <a href="/login">התחברות</a>
+        </div>
+    </nav>
+
+    <div class="auth-wrapper">
+        <div class="auth-card">
+            <h1>הרשמה</h1>
+            <p>צור חשבון והתחל לקבל התאמות לעבודה</p>
+            
+            <div class="error-msg" id="errorMsg"></div>
+            
+            <div class="form-group">
+                <label>שם מלא</label>
+                <input type="text" id="name" placeholder="ישראל ישראלי" autofocus>
+            </div>
+            
+            <div class="form-group">
+                <label>מייל</label>
+                <input type="email" id="email" placeholder="your@email.com" dir="ltr">
+            </div>
+            
+            <div class="form-group">
+                <label>סיסמה</label>
+                <input type="password" id="password" placeholder="לפחות 6 תווים">
+            </div>
+            
+            <button class="btn btn-primary" id="submitBtn" onclick="handleRegister()">
+                יצירת חשבון
+            </button>
+            
+            <p class="text-center mt-16">
+                כבר יש חשבון? <a href="/login" class="text-link">התחברות</a>
+            </p>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+    <script>
+        if (API.isLoggedIn()) window.location.href = '/dashboard';
+        
+        async function handleRegister() {
+            hideError('errorMsg');
+            const btn = document.getElementById('submitBtn');
+            showLoading(btn, 'נרשם...');
+            
+            try {
+                const data = await API.post('/auth/register', {
+                    name: document.getElementById('name').value,
+                    email: document.getElementById('email').value,
+                    password: document.getElementById('password').value
+                });
+                
+                API.saveAuth(data);
+                window.location.href = '/upload';
+            } catch (err) {
+                showError('errorMsg', err.message);
+            } finally {
+                hideLoading(btn);
+            }
+        }
+        
+        // Enter key
+        document.querySelectorAll('input').forEach(el => {
+            el.addEventListener('keydown', e => { if (e.key === 'Enter') handleRegister(); });
+        });
+    </script>
+</body>
+</html>
