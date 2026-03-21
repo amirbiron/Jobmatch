@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JobMatch — קורות החיים שלך עובדים בשבילך</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .hero {
+            text-align: center;
+            padding: 80px 24px 60px;
+            max-width: 700px;
+            margin: 0 auto;
+        }
+        .hero h1 {
+            font-size: 2.8rem;
+            font-weight: 700;
+            line-height: 1.2;
+            margin-bottom: 20px;
+            letter-spacing: -1px;
+        }
+        .hero h1 span { color: var(--accent); }
+        .hero p {
+            color: var(--text-secondary);
+            font-size: 1.15rem;
+            margin-bottom: 40px;
+            line-height: 1.7;
+        }
+        .hero-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+        .hero-buttons .btn { width: auto; padding: 14px 32px; font-size: 1rem; }
+        
+        .features {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 0 24px 80px;
+        }
+        .feature-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 32px 24px;
+            text-align: center;
+        }
+        .feature-card .icon { font-size: 2.5rem; margin-bottom: 16px; }
+        .feature-card h3 { font-size: 1.1rem; margin-bottom: 8px; }
+        .feature-card p { color: var(--text-secondary); font-size: 0.9rem; }
+        
+        @media (max-width: 700px) {
+            .hero h1 { font-size: 2rem; }
+            .features { grid-template-columns: 1fr; }
+            .hero-buttons { flex-direction: column; }
+            .hero-buttons .btn { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <a href="/" class="navbar-brand">⚡ JobMatch</a>
+        <div class="navbar-links" id="navLinks">
+            <a href="/login">התחברות</a>
+            <a href="/register" class="btn btn-primary" style="width:auto;padding:8px 20px;">הרשמה</a>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <h1>קורות החיים שלך<br><span>עובדים בשבילך</span></h1>
+        <p>
+            מעלים קו"ח → המערכת סורקת אלפי משרות בפייסבוק →
+            <br>ה-AI מוצא התאמות → הקו"ח נשלח אוטומטית למגייסים.
+            <br>אתה רק מקבל עדכון.
+        </p>
+        <div class="hero-buttons">
+            <a href="/register" class="btn btn-primary">התחלה חינם →</a>
+            <a href="#features" class="btn btn-outline">איך זה עובד?</a>
+        </div>
+    </section>
+
+    <section class="features" id="features">
+        <div class="feature-card">
+            <div class="icon">📄</div>
+            <h3>מעלים קו"ח</h3>
+            <p>PDF פשוט — ה-AI מחלץ את כל המידע ויוצר פרופיל מקצועי</p>
+        </div>
+        <div class="feature-card">
+            <div class="icon">🔍</div>
+            <h3>סריקה אוטומטית</h3>
+            <p>המערכת סורקת קבוצות דרושים בפייסבוק כל כמה שעות</p>
+        </div>
+        <div class="feature-card">
+            <div class="icon">🎯</div>
+            <h3>שליחה חכמה</h3>
+            <p>כשיש התאמה — הקו"ח נשלח למגייס ואתם מקבלים עדכון</p>
+        </div>
+    </section>
+
+    <script src="/static/js/app.js"></script>
+    <script>
+        // If already logged in, redirect to dashboard
+        if (API.isLoggedIn()) {
+            document.getElementById('navLinks').innerHTML = `
+                <a href="/dashboard">דשבורד</a>
+                <a href="#" onclick="API.logout()">התנתקות</a>
+            `;
+        }
+    </script>
+</body>
+</html>
