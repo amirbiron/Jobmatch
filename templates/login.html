@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>התחברות — JobMatch</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <a href="/" class="navbar-brand">⚡ JobMatch</a>
+        <div class="navbar-links">
+            <a href="/register">הרשמה</a>
+        </div>
+    </nav>
+
+    <div class="auth-wrapper">
+        <div class="auth-card">
+            <h1>התחברות</h1>
+            <p>ברוך שובך</p>
+            
+            <div class="error-msg" id="errorMsg"></div>
+            
+            <div class="form-group">
+                <label>מייל</label>
+                <input type="email" id="email" placeholder="your@email.com" dir="ltr" autofocus>
+            </div>
+            
+            <div class="form-group">
+                <label>סיסמה</label>
+                <input type="password" id="password" placeholder="הסיסמה שלך">
+            </div>
+            
+            <button class="btn btn-primary" id="submitBtn" onclick="handleLogin()">
+                כניסה
+            </button>
+            
+            <p class="text-center mt-16">
+                אין חשבון? <a href="/register" class="text-link">הרשמה</a>
+            </p>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+    <script>
+        if (API.isLoggedIn()) window.location.href = '/dashboard';
+        
+        async function handleLogin() {
+            hideError('errorMsg');
+            const btn = document.getElementById('submitBtn');
+            showLoading(btn, 'מתחבר...');
+            
+            try {
+                const data = await API.post('/auth/login', {
+                    email: document.getElementById('email').value,
+                    password: document.getElementById('password').value
+                });
+                
+                API.saveAuth(data);
+                window.location.href = '/dashboard';
+            } catch (err) {
+                showError('errorMsg', err.message);
+            } finally {
+                hideLoading(btn);
+            }
+        }
+        
+        document.querySelectorAll('input').forEach(el => {
+            el.addEventListener('keydown', e => { if (e.key === 'Enter') handleLogin(); });
+        });
+    </script>
+</body>
+</html>
