@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>דשבורד — JobMatch</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .notif-bell { position: relative; cursor: pointer; font-size: 1.2rem; padding: 8px; }
+        .notif-badge {
+            position: absolute; top: 2px; left: 2px; background: var(--error); color: white;
+            font-size: 0.65rem; width: 18px; height: 18px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center; font-weight: 700;
+        }
+        .notif-panel { display: none; position: fixed; inset: 0; z-index: 200; }
+        .notif-panel.open { display: flex; }
+        .notif-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.5); }
+        .notif-drawer {
+            position: absolute; top: 0; left: 0; width: 380px; max-width: 90vw; height: 100%;
+            background: var(--bg-card); border-right: 1px solid var(--border); overflow-y: auto; padding: 24px;
+        }
+        .notif-item { padding: 12px 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; line-height: 1.5; }
+        .notif-item.unread { border-right: 3px solid var(--accent); padding-right: 12px; }
+        .notif-item .notif-time { color: var(--text-muted); font-size: 0.75rem; margin-top: 4px; }
+        .manual-send-card {
+            background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+            padding: 20px 24px; margin-bottom: 12px;
+        }
+        .manual-send-card .post-preview {
+            color: var(--text-secondary); font-size: 0.85rem; line-height: 1.6;
+            margin-bottom: 12px; max-height: 80px; overflow: hidden;
+        }
+        .manual-send-actions { display: flex; gap: 8px; }
+        .manual-send-actions a, .manual-send-actions button { padding: 8px 16px; font-size: 0.85rem; width: auto; }
+        .tab-bar { display: flex; gap: 4px; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
+        .tab-bar button {
+            background: none; border: none; color: var(--text-secondary); padding: 12px 20px;
+            font-family: 'Rubik', sans-serif; font-size: 0.9rem; cursor: pointer;
+            border-bottom: 2px solid transparent; transition: all 0.2s;
+        }
+        .tab-bar button.active { color: var(--accent); border-bottom-color: var(--accent); }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <a href="/" class="navbar-brand">⚡ JobMatch</a>
+        <div class="navbar-links">
+            <span class="notif-bell" onclick="toggleNotifications()">
+                🔔 <span class="notif-badge" id="notifBadge" style="display:none;">0</span>
+            </span>
+            <a href="/upload">החלפת קו"ח</a>
+            <a href="/preferences">העדפות</a>
+            <a href="#" onclick="API.logout()">התנתקות</a>
+        </div>
+    </nav>
+
+    <!-- Notifications Panel -->
+    <div class="notif-panel" id="notifPanel">
+        <div class="notif-overlay" onclick="toggleNotifications()"></div>
+        <div class="notif-drawer">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                <h2 style="font-size:1.2rem;">🔔 התראות</h2>
+                <button class="btn btn-outline" style="width:auto;padding:6px 12px;font-size:0.8rem;" onclick="markAllRead()">סמן הכל כנקרא</button>
+            </div>
+            <div id="notifList"></div>
+            <div id="notifEmpty" class="empty-state" style="display:none;padding:32px 0;"><p>אין התראות</p></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="section-header"><h1>👋 שלום, <span id="userName">—</span></h1></div>
+
+        <div id="setupPrompt" style="display:none;">
+            <div class="preview-section" style="text-align:center;padding:40px;">
+                <div style="font-size:2.5rem;margin-bottom:16px;">🚀</div>
+                <h3 style="font-size:1.1rem;color:var(--text-primary);margin-bottom:8px;">בוא נתחיל!</h3>
+                <p style="color:var(--text-secondary);margin-bottom:24px;">העלה קורות חיים כדי שנתחיל לחפש לך התאמות</p>
+                <a href="/upload" class="btn btn-primary" style="width:auto;display:inline-flex;padding:12px 32px;text-decoration:none;">📄 העלאת קו"ח</a>
+            </div>
+        </div>
+
+        <div id="mainContent" style="display:none;">
+            <div class="stats-grid">
+                <div class="stat-card"><div class="stat-value" id="statSent">0</div><div class="stat-label">קו"ח נשלחו</div></div>
+                <div class="stat-card"><div class="stat-value" id="statPending">0</div><div class="stat-label">ממתינים</div></div>
+                <div class="stat-card"><div class="stat-value" id="statScore">0</div><div class="stat-label">ציון ממוצע</div></div>
+                <div class="stat-card"><div class="stat-value" id="statManual">0</div><div class="stat-label">לשליחה ידנית</div></div>
+            </div>
+
+            <div class="tab-bar">
+                <button class="active" onclick="switchTab('auto', this)">📧 נשלחו אוטומטית</button>
+                <button onclick="switchTab('manual', this)">✋ לשליחה ידנית</button>
+            </div>
+
+            <div id="tabAuto">
+                <div id="matchesList"></div>
+                <div id="emptyMatches" class="empty-state" style="display:none;">
+                    <div class="icon">⏳</div><p>עדיין אין התאמות — המערכת סורקת כל כמה שעות</p>
+                </div>
+                <div id="pagination" style="display:flex;justify-content:center;gap:8px;margin:24px 0 48px;"></div>
+            </div>
+
+            <div id="tabManual" style="display:none;">
+                <p style="color:var(--text-secondary);margin-bottom:16px;">הפוסטים האלה לא כוללים מייל — שלח בעצמך עם הודעה מוכנה</p>
+                <div id="manualList"></div>
+                <div id="emptyManual" class="empty-state" style="display:none;"><p>אין פוסטים לשליחה ידנית כרגע</p></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+    <script>
+        if (!API.requireAuth()) {}
+
+        async function loadNotifications() {
+            try {
+                const data = await API.get('/notifications/?per_page=30');
+                const badge = document.getElementById('notifBadge');
+                if (data.unread > 0) { badge.textContent = data.unread; badge.style.display = 'flex'; }
+                else badge.style.display = 'none';
+                const list = document.getElementById('notifList');
+                list.innerHTML = '';
+                if (!data.notifications.length) { document.getElementById('notifEmpty').style.display = 'block'; return; }
+                document.getElementById('notifEmpty').style.display = 'none';
+                data.notifications.forEach(n => {
+                    const div = document.createElement('div');
+                    div.className = `notif-item ${n.read ? '' : 'unread'}`;
+                    div.innerHTML = `<div>${n.message}</div><div class="notif-time">${n.created_at ? new Date(n.created_at).toLocaleString('he-IL') : ''}</div>`;
+                    list.appendChild(div);
+                });
+            } catch (e) {}
+        }
+        function toggleNotifications() { document.getElementById('notifPanel').classList.toggle('open'); }
+        async function markAllRead() {
+            await API.post('/notifications/read', { id: 'all' });
+            document.getElementById('notifBadge').style.display = 'none';
+            document.querySelectorAll('.notif-item.unread').forEach(el => el.classList.remove('unread'));
+        }
+
+        function switchTab(tab, btn) {
+            document.querySelectorAll('.tab-bar button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('tabAuto').style.display = tab === 'auto' ? 'block' : 'none';
+            document.getElementById('tabManual').style.display = tab === 'manual' ? 'block' : 'none';
+            if (tab === 'manual') loadManualMatches();
+        }
+
+        async function loadDashboard() {
+            try {
+                const me = await API.get('/auth/me');
+                document.getElementById('userName').textContent = me.user.name;
+                if (!me.has_cv) { document.getElementById('setupPrompt').style.display = 'block'; return; }
+                document.getElementById('mainContent').style.display = 'block';
+                loadStats(); loadMatches(1); loadNotifications();
+            } catch (err) { console.error(err); }
+        }
+
+        async function loadStats() {
+            try {
+                const s = await API.get('/dashboard/stats');
+                document.getElementById('statSent').textContent = s.total_sent;
+                document.getElementById('statPending').textContent = s.total_pending;
+                document.getElementById('statScore').textContent = s.avg_match_score + '%';
+                document.getElementById('statManual').textContent = s.total_manual || 0;
+            } catch (e) {}
+        }
+
+        async function loadMatches(page) {
+            try {
+                const data = await API.get(`/dashboard/matches?page=${page}&per_page=10`);
+                const list = document.getElementById('matchesList');
+                list.innerHTML = '';
+                const auto = data.matches.filter(m => m.send_method === 'email');
+                if (!auto.length && page === 1) { document.getElementById('emptyMatches').style.display = 'block'; return; }
+                document.getElementById('emptyMatches').style.display = 'none';
+                auto.forEach(m => {
+                    const sc = m.send_status === 'sent' ? 'badge-sent' : m.send_status === 'failed' ? 'badge-failed' : 'badge-pending';
+                    const st = m.send_status === 'sent' ? 'נשלח' : m.send_status === 'failed' ? 'נכשל' : 'ממתין';
+                    const card = document.createElement('div');
+                    card.className = 'match-card';
+                    card.innerHTML = `
+                        <div class="match-info">
+                            <h3>${m.job_title || m.match_reason || 'התאמה'}</h3>
+                            <p>${m.company ? '🏢 '+m.company+' · ' : ''}📧 ${m.target_email||''} · ${m.created_at ? new Date(m.created_at).toLocaleDateString('he-IL') : ''} · <span class="badge ${sc}">${st}</span></p>
+                        </div>
+                        <div class="match-score">${m.match_score}%</div>`;
+                    list.appendChild(card);
+                });
+                if (data.pages > 1) {
+                    const pag = document.getElementById('pagination'); pag.innerHTML = '';
+                    for (let i = 1; i <= data.pages; i++) {
+                        const b = document.createElement('button');
+                        b.className = `btn ${i===page?'btn-primary':'btn-outline'}`;
+                        b.style.cssText = 'width:auto;padding:8px 16px;font-size:0.85rem;';
+                        b.textContent = i; b.onclick = () => loadMatches(i); pag.appendChild(b);
+                    }
+                }
+            } catch (e) {}
+        }
+
+        async function loadManualMatches() {
+            try {
+                const data = await API.get('/dashboard/matches?page=1&per_page=50');
+                const manual = data.matches.filter(m => m.send_method === 'fb_message');
+                const list = document.getElementById('manualList');
+                list.innerHTML = '';
+                if (!manual.length) { document.getElementById('emptyManual').style.display = 'block'; return; }
+                document.getElementById('emptyManual').style.display = 'none';
+                manual.forEach(m => {
+                    const card = document.createElement('div');
+                    card.className = 'manual-send-card';
+                    card.innerHTML = `
+                        <div style="display:flex;justify-content:space-between;align-items:start;">
+                            <h3>🎯 ${m.job_title||'משרה'} ${m.company?'— '+m.company:''}</h3>
+                            <span class="match-score" style="font-size:1.1rem;">${m.match_score}%</span>
+                        </div>
+                        <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:8px;">${m.match_reason||''}</p>
+                        <div class="post-preview">${m.post_text_preview||''}</div>
+                        <div class="manual-send-actions">
+                            <a href="${m.post_url||'#'}" target="_blank" class="btn btn-primary" style="text-decoration:none;">🔗 פתח בפייסבוק</a>
+                            <button class="btn btn-outline" onclick="copyMsg('${(m.job_title||'משרה').replace(/'/g,"\\'")}')">📋 העתק הודעה</button>
+                        </div>`;
+                    list.appendChild(card);
+                });
+            } catch (e) {}
+        }
+
+        function copyMsg(title) {
+            const u = API.getUser();
+            const t = `שלום, שמי ${u?.name||''} ואני מתעניין/ת במשרת ${title} שפורסמה. אשמח לשלוח קורות חיים. תודה!`;
+            navigator.clipboard.writeText(t).then(() => alert('ההודעה הועתקה ✅'));
+        }
+
+        loadDashboard();
+    </script>
+</body>
+</html>
