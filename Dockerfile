@@ -30,6 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     libasound2 \
     libxshmfence1 \
+    fonts-liberation \
+    fonts-noto-core \
     && rm -rf /var/lib/apt/lists/*
 
 RUN playwright install chromium

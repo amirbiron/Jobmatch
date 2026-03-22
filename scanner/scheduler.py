@@ -10,6 +10,9 @@ import os
 
 logger = logging.getLogger(__name__)
 
+# Hold the file lock handle at module level so it survives for the process lifetime
+_lock_file = None
+
 # Track scan state
 _scan_state = {
     "last_run": None,
@@ -118,6 +121,20 @@ def start_scheduler(db):
         logger.info("Scheduler already running — skipping duplicate start")
         return None
 
+    # Only run scheduler in one Gunicorn worker to avoid duplicate scans.
+    # Use a file lock so the first worker to acquire it runs the scheduler.
+    import fcntl
+    try:
+        global _lock_file
+        _lock_file = open("/tmp/jobmatch_scheduler.lock", "w")
+        fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (IOError, OSError):
+        if _lock_file:
+            _lock_file.close()
+            _lock_file = None
+        logger.info("Another worker owns the scheduler lock — skipping")
+        return None
+
     try:
         scheduler = BackgroundScheduler()
 
@@ -130,15 +147,18 @@ def start_scheduler(db):
             id="facebook_scan",
             max_instances=1,
             misfire_grace_time=600,
-            next_run_time=datetime.now() + timedelta(seconds=30)
+            next_run_time=datetime.now() + timedelta(minutes=2)
         )
 
         scheduler.start()
         _scheduler_started = True
-        logger.info(f"Scheduler started — first scan in 30s, then every {Config.SCAN_INTERVAL_HOURS} hours")
+        logger.info(f"Scheduler started — first scan in 2min, then every {Config.SCAN_INTERVAL_HOURS} hours")
         return scheduler
     except Exception as e:
         logger.error(f"Failed to start scheduler: {e}", exc_info=True)
+        if _lock_file:
+            _lock_file.close()
+            _lock_file = None
         return None
 
 

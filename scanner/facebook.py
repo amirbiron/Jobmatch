@@ -8,6 +8,24 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+NAVIGATION_TIMEOUT = 30000  # 30 seconds for cloud environments
+
+
+async def _goto_with_retry(page, url: str, timeout: int = NAVIGATION_TIMEOUT, retries: int = 2):
+    """Navigate to URL with retry logic for flaky cloud networks"""
+    last_error = None
+    max_attempts = 1 + retries
+    for attempt in range(1, max_attempts + 1):
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+            return
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Navigation to {url} failed (attempt {attempt}/{max_attempts}): {e}")
+            if attempt < max_attempts:
+                await page.wait_for_timeout(2000 * attempt)
+    raise last_error
+
 
 def create_post_hash(post_text: str, post_url: str) -> str:
     """Create unique hash for a post based on text + URL"""
@@ -31,7 +49,13 @@ class FacebookScanner:
         """Create browser context with saved session"""
         browser = await playwright.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox"]
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+            ]
         )
         
         # Try loading existing session
@@ -56,14 +80,14 @@ class FacebookScanner:
     async def _check_session_valid(self, page) -> bool:
         """Check if Facebook session is still active"""
         try:
-            await page.goto("https://www.facebook.com", wait_until="domcontentloaded", timeout=15000)
+            await _goto_with_retry(page, "https://www.facebook.com")
             await page.wait_for_timeout(3000)
-            
+
             # If we see login form — session is expired
             login_btn = await page.query_selector("[name='login']")
             if login_btn:
                 return False
-            
+
             # If we see the main feed — we're logged in
             return True
         except Exception as e:
@@ -73,7 +97,7 @@ class FacebookScanner:
     async def _login(self, page, email: str, password: str) -> bool:
         """Login to Facebook and save session"""
         try:
-            await page.goto("https://www.facebook.com", wait_until="domcontentloaded", timeout=15000)
+            await _goto_with_retry(page, "https://www.facebook.com")
             await page.wait_for_timeout(2000)
             
             await page.fill("#email", email)
@@ -102,7 +126,7 @@ class FacebookScanner:
         posts = []
         
         try:
-            await page.goto(group_url, wait_until="domcontentloaded", timeout=20000)
+            await _goto_with_retry(page, group_url)
             await page.wait_for_timeout(4000)
             
             # Scroll to load more posts
