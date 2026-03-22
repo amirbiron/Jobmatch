@@ -129,6 +129,9 @@ def start_scheduler(db):
         _lock_file = open("/tmp/jobmatch_scheduler.lock", "w")
         fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except (IOError, OSError):
+        if _lock_file:
+            _lock_file.close()
+            _lock_file = None
         logger.info("Another worker owns the scheduler lock — skipping")
         return None
 
