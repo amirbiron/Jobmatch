@@ -94,6 +94,7 @@ def match_candidate_to_post(candidate: dict, post_text: str) -> dict:
     models_to_try = [_active_model] + [m for m in MODEL_PRIORITY if m != _active_model]
 
     for model_name in models_to_try:
+        response = None
         try:
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
@@ -112,7 +113,8 @@ def match_candidate_to_post(candidate: dict, post_text: str) -> dict:
             return result
 
         except (json.JSONDecodeError, ValueError, KeyError):
-            logger.error(f"Gemini returned invalid JSON: {response.text[:200] if response else 'empty'}")
+            raw = response.text[:200] if response and hasattr(response, 'text') else 'empty/no response'
+            logger.error(f"Gemini returned invalid JSON: {raw}")
             return {"match_score": 0, "match_reason": "שגיאה בניתוח", "error": True}
         except Exception as e:
             if _is_model_deprecated(e):

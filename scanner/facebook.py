@@ -399,8 +399,8 @@ class FacebookScanner:
 
             try:
                 # Ensure we have a valid session
-                async def ensure_session():
-                    if not await self._check_session_valid(page):
+                async def ensure_session(force=False):
+                    if force or not await self._check_session_valid(page):
                         logger.info("Session invalid — logging in...")
                         self.session_manager.invalidate_session()
                         if not await self._login(page, fb_email, fb_password):
@@ -427,8 +427,8 @@ class FacebookScanner:
                         login_redirect_count += 1
                         failed_groups.append(group_url)
                         if login_redirect_count >= 2:
-                            logger.warning("Multiple groups redirected to login — re-logging in...")
-                            if not await ensure_session():
+                            logger.warning("Multiple groups redirected to login — forcing re-login...")
+                            if not await ensure_session(force=True):
                                 logger.error("Re-login failed — aborting scan")
                                 break
                             # Retry ALL failed groups (including the first one)
@@ -441,6 +441,15 @@ class FacebookScanner:
                             login_redirect_count = 0
                         continue  # don't dedup empty posts from failed attempt
                     else:
+                        # Successful scan — retry any previously failed group before clearing
+                        if failed_groups:
+                            logger.info(f"Retrying {len(failed_groups)} previously failed group(s) after successful scan")
+                            for retry_url in failed_groups:
+                                retry_posts = await self.scan_group(page, retry_url)
+                                all_posts.extend(self._dedup_posts(retry_posts))
+                                await page.goto("about:blank")
+                                await asyncio.sleep(random.uniform(2.0, 4.0))
+                            failed_groups.clear()
                         login_redirect_count = 0
 
                     all_posts.extend(self._dedup_posts(posts))
