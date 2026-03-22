@@ -16,10 +16,7 @@ def generate_email_body(candidate: dict, job_title: str, match_reason: str) -> d
     """Use Gemini to write a natural cover email in Hebrew"""
     
     genai.configure(api_key=Config.GEMINI_API_KEY)
-    model = genai.GenerativeModel(
-        "gemini-2.5-flash",
-        generation_config=genai.GenerationConfig(thinking_config={"thinking_budget": 0}),
-    )
+    model = genai.GenerativeModel("gemini-1.5-flash")
     
     prompt = f"""
 כתוב מייל קצר ומקצועי בעברית שנשלח למגייס עם קורות חיים.
