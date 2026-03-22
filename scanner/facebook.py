@@ -63,6 +63,12 @@ def _stable_text_for_hash(text: str) -> str:
     return ' '.join(stable).strip()
 
 
+def _legacy_post_hash(post_text: str, post_url: str) -> str:
+    """Original hash algorithm — needed to match existing DB entries."""
+    content = f"{post_url}:{post_text[:200]}"
+    return hashlib.sha256(content.encode()).hexdigest()
+
+
 def create_post_hash(post_text: str, post_url: str) -> str:
     """Create stable hash for a post — uses first 150 chars of normalized text.
     150 chars captures the core content; dynamic tail (comments, engagement) is excluded."""
@@ -71,6 +77,27 @@ def create_post_hash(post_text: str, post_url: str) -> str:
     base_url = post_url.split('?')[0] if post_url else ''
     core = f"{base_url}:{normalized[:150]}"
     return hashlib.sha256(core.encode()).hexdigest()
+
+
+def find_existing_post(db, post_text: str, post_url: str) -> dict | None:
+    """Find an existing post by new hash OR legacy hash — prevents
+    treating already-seen posts as new after the hash algorithm change."""
+    new_hash = create_post_hash(post_text, post_url)
+    existing = db.scanned_posts.find_one({"hash": new_hash})
+    if existing:
+        return existing
+
+    # Fallback: check legacy hash for posts stored before the migration
+    legacy = _legacy_post_hash(post_text, post_url)
+    existing = db.scanned_posts.find_one({"hash": legacy})
+    if existing:
+        # Migrate: add new hash so future lookups are fast
+        db.scanned_posts.update_one(
+            {"_id": existing["_id"]},
+            {"$set": {"hash": new_hash}}
+        )
+        logger.info(f"Migrated post hash for {post_url}")
+    return existing
 
 
 def extract_email_from_text(text: str) -> str | None:
@@ -262,9 +289,8 @@ class FacebookScanner:
                     try:
                         post = await self._extract_post_from_element(el, group_url, seen_texts)
                         if post:
-                            # Check if we've already seen this post in DB
-                            post_hash = create_post_hash(post["text"], post["url"])
-                            if self.db.scanned_posts.find_one({"hash": post_hash}):
+                            # Check if we've already seen this post in DB (both hash algorithms)
+                            if find_existing_post(self.db, post["text"], post["url"]):
                                 consecutive_known += 1
                                 if consecutive_known >= KNOWN_THRESHOLD:
                                     logger.info(f"Hit {KNOWN_THRESHOLD} consecutive known posts — stopping scroll")
@@ -320,14 +346,43 @@ class FacebookScanner:
 
         return posts
     
+    def _dedup_posts(self, posts: list[dict]) -> list[dict]:
+        """Dedup posts against DB — returns list with is_new/candidates_sent flags.
+        Checks both new and legacy hash to avoid re-processing after hash migration."""
+        result = []
+        for post in posts:
+            post_hash = create_post_hash(post["text"], post["url"])
+            existing = find_existing_post(self.db, post["text"], post["url"])
+
+            if not existing:
+                self.db.scanned_posts.insert_one({
+                    "hash": post_hash,
+                    "post_url": post["url"],
+                    "post_text": post["text"],
+                    "extracted_email": post["email"],
+                    "group_url": post["group_url"],
+                    "first_seen": datetime.utcnow(),
+                    "expires_at": datetime.utcnow() + timedelta(days=30),
+                    "candidates_sent": []
+                })
+                post["hash"] = post_hash
+                post["is_new"] = True
+                result.append(post)
+            else:
+                post["hash"] = post_hash
+                post["is_new"] = False
+                post["candidates_sent"] = existing.get("candidates_sent", [])
+                result.append(post)
+        return result
+
     async def scan_all_groups(self, group_urls: list[str], fb_email: str, fb_password: str) -> list[dict]:
         """Full scan cycle — login if needed, scan all groups, deduplicate"""
         all_posts = []
-        
+
         async with async_playwright() as p:
             browser, context = await self._create_context(p)
             page = await context.new_page()
-            
+
             try:
                 # Ensure we have a valid session
                 async def ensure_session():
@@ -343,8 +398,9 @@ class FacebookScanner:
                     await browser.close()
                     return []
 
-                # Scan each group
+                # Scan each group — track login failures for mid-scan re-login
                 login_redirect_count = 0
+                failed_groups = []
                 for group_url in group_urls:
                     group_url = group_url.strip()
                     if not group_url:
@@ -352,52 +408,33 @@ class FacebookScanner:
 
                     posts = await self.scan_group(page, group_url)
 
-                    # Detect login redirects — attempt re-login once after 2 consecutive failures
+                    # Detect login redirects — collect failed groups, re-login after 2 consecutive
                     if not posts and "/login" in page.url.lower():
                         login_redirect_count += 1
+                        failed_groups.append(group_url)
                         if login_redirect_count >= 2:
-                            logger.warning("Multiple groups redirected to login — session expired mid-scan, re-logging in...")
+                            logger.warning("Multiple groups redirected to login — re-logging in...")
                             if not await ensure_session():
                                 logger.error("Re-login failed — aborting scan")
                                 break
-                            # Retry this group after re-login
-                            posts = await self.scan_group(page, group_url)
+                            # Retry ALL failed groups (including the first one)
+                            for retry_url in failed_groups:
+                                retry_posts = await self.scan_group(page, retry_url)
+                                all_posts.extend(self._dedup_posts(retry_posts))
+                                await page.goto("about:blank")
+                                await asyncio.sleep(random.uniform(2.0, 4.0))
+                            failed_groups.clear()
                             login_redirect_count = 0
+                        continue  # don't dedup empty posts from failed attempt
                     else:
                         login_redirect_count = 0
 
-                    # Deduplication — filter already-seen posts
-                    for post in posts:
-                        post_hash = create_post_hash(post["text"], post["url"])
-
-                        existing = self.db.scanned_posts.find_one({"hash": post_hash})
-
-                        if not existing:
-                            # New post — save it
-                            self.db.scanned_posts.insert_one({
-                                "hash": post_hash,
-                                "post_url": post["url"],
-                                "post_text": post["text"],
-                                "extracted_email": post["email"],
-                                "group_url": post["group_url"],
-                                "first_seen": datetime.utcnow(),
-                                "expires_at": datetime.utcnow() + timedelta(days=30),
-                                "candidates_sent": []
-                            })
-                            post["hash"] = post_hash
-                            post["is_new"] = True
-                            all_posts.append(post)
-                        else:
-                            # Existing post — still include for matching new candidates
-                            post["hash"] = post_hash
-                            post["is_new"] = False
-                            post["candidates_sent"] = existing.get("candidates_sent", [])
-                            all_posts.append(post)
+                    all_posts.extend(self._dedup_posts(posts))
 
                     # Free DOM memory and polite delay between groups
                     await page.goto("about:blank")
                     await asyncio.sleep(random.uniform(2.0, 4.0))
-                
+
             finally:
                 # Save updated session
                 try:
