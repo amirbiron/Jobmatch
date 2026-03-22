@@ -15,7 +15,7 @@ def parse_cv_with_ai(raw_text: str) -> dict:
         return {"error": "missing_api_key"}
 
     genai.configure(api_key=Config.GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    model = genai.GenerativeModel("gemini-2.5-flash")
     
     prompt = f"""
 אתה מומחה לניתוח קורות חיים בעברית ואנגלית.
