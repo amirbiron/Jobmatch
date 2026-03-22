@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 import google.generativeai as genai
 from config import Config
 
@@ -52,18 +53,26 @@ def parse_cv_with_ai(raw_text: str) -> dict:
 }}
 """
     
-    try:
-        response = model.generate_content(prompt)
-        raw_json = response.text.strip()
-        logger.info(f"Gemini response length: {len(raw_json)}")
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content(prompt)
+            raw_json = response.text.strip()
+            logger.info(f"Gemini response length: {len(raw_json)}")
 
-        # Clean potential markdown wrapping
-        raw_json = raw_json.replace("```json", "").replace("```", "").strip()
+            # Clean potential markdown wrapping
+            raw_json = raw_json.replace("```json", "").replace("```", "").strip()
 
-        return json.loads(raw_json)
-    except json.JSONDecodeError:
-        logger.error(f"JSON parse failed. Raw response: {response.text[:500] if response else 'no response'}")
-        return {"error": "parse_failed", "raw": response.text[:500] if response else ""}
-    except Exception as e:
-        logger.error(f"Gemini API error: {type(e).__name__}: {e}")
-        return {"error": str(e)}
+            return json.loads(raw_json)
+        except json.JSONDecodeError:
+            logger.error(f"JSON parse failed. Raw response: {response.text[:500] if response else 'no response'}")
+            return {"error": "parse_failed", "raw": response.text[:500] if response else ""}
+        except Exception as e:
+            logger.error(f"Gemini API error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}: {e}")
+            if "429" in str(e) or "quota" in str(e).lower() or "resource" in str(e).lower():
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** (attempt + 1)
+                    logger.info(f"Rate limited, waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                    continue
+            return {"error": str(e)}
