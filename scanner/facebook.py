@@ -458,6 +458,19 @@ class FacebookScanner:
                     await page.goto("about:blank")
                     await asyncio.sleep(random.uniform(2.0, 4.0))
 
+                # After loop — retry any remaining failed groups (e.g. last group(s) failed)
+                if failed_groups:
+                    logger.warning(f"End of scan loop — retrying {len(failed_groups)} failed group(s)...")
+                    if await ensure_session(force=True):
+                        for retry_url in failed_groups:
+                            retry_posts = await self.scan_group(page, retry_url)
+                            all_posts.extend(self._dedup_posts(retry_posts))
+                            await page.goto("about:blank")
+                            await asyncio.sleep(random.uniform(2.0, 4.0))
+                    else:
+                        logger.error(f"Re-login failed — {len(failed_groups)} group(s) skipped this cycle")
+                    failed_groups.clear()
+
             finally:
                 # Save updated session
                 try:

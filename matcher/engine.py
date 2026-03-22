@@ -113,7 +113,12 @@ def match_candidate_to_post(candidate: dict, post_text: str) -> dict:
             return result
 
         except (json.JSONDecodeError, ValueError, KeyError):
-            raw = response.text[:200] if response and hasattr(response, 'text') else 'empty/no response'
+            raw = 'empty/no response'
+            try:
+                if response is not None:
+                    raw = response.text[:200]
+            except Exception:
+                raw = 'response.text inaccessible (blocked/safety filter?)'
             logger.error(f"Gemini returned invalid JSON: {raw}")
             return {"match_score": 0, "match_reason": "שגיאה בניתוח", "error": True}
         except Exception as e:
