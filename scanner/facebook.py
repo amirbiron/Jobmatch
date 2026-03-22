@@ -5,10 +5,12 @@ import hashlib
 import asyncio
 import re
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
 NAVIGATION_TIMEOUT = 30000  # 30 seconds for cloud environments
+DEBUG_SCREENSHOTS = os.getenv("DEBUG_SCREENSHOTS", "").lower() in ("1", "true", "yes")
 
 
 async def _goto_with_retry(page, url: str, timeout: int = NAVIGATION_TIMEOUT, retries: int = 2):
@@ -67,7 +69,7 @@ class FacebookScanner:
             "user_agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/121.0.0.0 Safari/537.36"
+                "Chrome/131.0.0.0 Safari/537.36"
             )
         }
         
@@ -86,9 +88,17 @@ class FacebookScanner:
             # If we see login form — session is expired
             login_btn = await page.query_selector("[name='login']")
             if login_btn:
+                logger.warning("Session check: login button found — session expired")
+                return False
+
+            # Check for checkpoint/captcha pages
+            page_url = page.url
+            if "checkpoint" in page_url or "captcha" in page_url:
+                logger.warning(f"Session check: checkpoint/captcha detected at {page_url}")
                 return False
 
             # If we see the main feed — we're logged in
+            logger.info("Session check: valid session detected")
             return True
         except Exception as e:
             logger.error(f"Session check failed: {e}")
@@ -121,75 +131,123 @@ class FacebookScanner:
             logger.error(f"Login error: {e}")
             return False
     
+    async def _extract_post_from_element(self, el, group_url, seen_texts):
+        """Extract a post dict from a DOM element, or return None if filtered out."""
+        text = await el.inner_text()
+        text = text.strip()
+
+        if len(text) < 50:
+            return None
+
+        text_key = text[:100]
+        if text_key in seen_texts:
+            return None
+        seen_texts.add(text_key)
+
+        post_url = group_url
+        try:
+            # For articles, search directly; for other elements, find parent article first
+            container = el
+            role = await el.get_attribute("role")
+            if role != "article":
+                container = await el.evaluate_handle("el => el.closest('[role=\"article\"]')")
+
+            link = await container.query_selector(
+                "a[href*='/posts/'], a[href*='permalink'], "
+                "a[href*='/p/'], a[href*='story_fbid']"
+            )
+            if link:
+                post_url = await link.get_attribute("href")
+        except Exception:
+            pass
+
+        return {
+            "text": text,
+            "url": post_url,
+            "email": extract_email_from_text(text),
+            "group_url": group_url,
+            "scraped_at": datetime.utcnow()
+        }
+
     async def scan_group(self, page, group_url: str) -> list[dict]:
         """Scan a single Facebook group for job posts"""
         posts = []
-        
+
         try:
             await _goto_with_retry(page, group_url)
             await page.wait_for_timeout(4000)
-            
+
+            # Check if we were redirected away from the group (login/checkpoint)
+            current_url = page.url
+            if current_url != group_url and not current_url.startswith(group_url):
+                from urllib.parse import urlparse
+                parsed = urlparse(current_url)
+                path = parsed.path.lower()
+                if "/login" in path or "/checkpoint" in path or "/captcha" in path:
+                    logger.warning(f"Redirected to {current_url} instead of group — session may be invalid")
+                    return posts
+
             # Scroll to load more posts
-            for _ in range(3):
+            for scroll_i in range(3):
                 await page.evaluate("window.scrollBy(0, window.innerHeight)")
                 await page.wait_for_timeout(2000)
-            
-            # Extract posts — Facebook's DOM changes often, so we use multiple selectors
-            post_elements = await page.query_selector_all(
-                "[data-ad-comet-preview='message'], "
-                "[data-ad-preview='message'], "
-                "div[dir='auto'][style*='text-align']"
-            )
-            
-            # Fallback: get all significant text blocks
-            if not post_elements:
-                post_elements = await page.query_selector_all("div[dir='auto']")
-            
-            seen_texts = set()
-            
-            for el in post_elements:
+
+            # Save debug screenshot if enabled
+            if DEBUG_SCREENSHOTS:
                 try:
-                    text = await el.inner_text()
-                    text = text.strip()
-                    
-                    # Filter: at least 50 chars, not a duplicate
-                    if len(text) < 50:
-                        continue
-                    
-                    text_key = text[:100]
-                    if text_key in seen_texts:
-                        continue
-                    seen_texts.add(text_key)
-                    
-                    # Try to get the post URL (permalink)
-                    post_url = group_url  # fallback
-                    try:
-                        # Look for timestamp link which usually contains permalink
-                        parent = await el.evaluate_handle("el => el.closest('[role=\"article\"]')")
-                        link = await parent.query_selector("a[href*='/posts/'], a[href*='permalink']")
-                        if link:
-                            post_url = await link.get_attribute("href")
-                    except:
-                        pass
-                    
-                    email = extract_email_from_text(text)
-                    
-                    posts.append({
-                        "text": text,
-                        "url": post_url,
-                        "email": email,
-                        "group_url": group_url,
-                        "scraped_at": datetime.utcnow()
-                    })
-                    
+                    group_name = group_url.rstrip("/").split("/")[-1]
+                    screenshot_path = f"/tmp/fb_debug_{group_name}.png"
+                    await page.screenshot(path=screenshot_path)
+                    logger.info(f"Debug screenshot saved: {screenshot_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to save debug screenshot: {e}")
+
+            # Strategy 1: article-based extraction (most reliable)
+            articles = await page.query_selector_all("[role='article']")
+            logger.info(f"Found {len(articles)} article elements in {group_url}")
+
+            seen_texts = set()
+
+            for el in articles:
+                try:
+                    post = await self._extract_post_from_element(el, group_url, seen_texts)
+                    if post:
+                        posts.append(post)
                 except Exception:
                     continue
-            
+
+            # Strategy 2+3: fallback selectors (only if articles didn't yield results)
+            if not posts:
+                post_elements = await page.query_selector_all(
+                    "[data-ad-comet-preview='message'], "
+                    "[data-ad-preview='message'], "
+                    "div[dir='auto'][style*='text-align']"
+                )
+
+                if not post_elements:
+                    post_elements = await page.query_selector_all("div[dir='auto']")
+                    logger.info(f"Fallback: found {len(post_elements)} dir=auto elements")
+
+                for el in post_elements:
+                    try:
+                        post = await self._extract_post_from_element(el, group_url, seen_texts)
+                        if post:
+                            posts.append(post)
+                    except Exception:
+                        continue
+
             logger.info(f"Scraped {len(posts)} posts from {group_url}")
-            
+
+            if not posts:
+                try:
+                    title = await page.title()
+                    logger.warning(f"Zero posts from {group_url} — page title: '{title}'")
+                except Exception:
+                    pass
+
         except Exception as e:
             logger.error(f"Error scanning group {group_url}: {e}")
-        
+
         return posts
     
     async def scan_all_groups(self, group_urls: list[str], fb_email: str, fb_password: str) -> list[dict]:
