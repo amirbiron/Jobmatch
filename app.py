@@ -24,7 +24,14 @@ def create_app():
     
     # Create indexes
     _setup_indexes(db)
-    
+
+    # Ensure admin user on startup
+    if Config.ADMIN_EMAIL:
+        db.users.update_one(
+            {"email": Config.ADMIN_EMAIL},
+            {"$set": {"role": "admin"}},
+        )
+
     # Register blueprints
     from dashboard.notifications import notif_bp
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
