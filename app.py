@@ -28,7 +28,7 @@ def create_app():
     # Ensure admin user on startup
     if Config.ADMIN_EMAIL:
         db.users.update_one(
-            {"email": Config.ADMIN_EMAIL},
+            {"email": Config.ADMIN_EMAIL.strip().lower()},
             {"$set": {"role": "admin"}},
         )
 
