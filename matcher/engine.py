@@ -112,21 +112,25 @@ def match_candidate_to_post(candidate: dict, post_text: str) -> dict:
 
             return result
 
-        except (json.JSONDecodeError, ValueError, KeyError):
+        except (json.JSONDecodeError, KeyError):
+            # JSON parse error or missing key — this model returned garbage,
+            # no point trying another model with the same prompt
             raw = 'empty/no response'
             try:
                 if response is not None:
                     raw = response.text[:200]
             except Exception:
-                raw = 'response.text inaccessible (blocked/safety filter?)'
+                raw = 'response.text inaccessible'
             logger.error(f"Gemini returned invalid JSON: {raw}")
             return {"match_score": 0, "match_reason": "שגיאה בניתוח", "error": True}
         except Exception as e:
+            # Safety blocks (ValueError from response.text), deprecated models,
+            # network errors — all worth trying with the next model
             if _is_model_deprecated(e):
                 logger.warning(f"Model {model_name} appears deprecated: {e}")
-                continue  # try next model
-            logger.error(f"Matching error with {model_name}: {e}")
-            return {"match_score": 0, "match_reason": str(e), "error": True}
+            else:
+                logger.warning(f"Model {model_name} failed (may retry next model): {e}")
+            continue
 
     logger.error("All models failed — no available model")
     return {"match_score": 0, "match_reason": "כל המודלים נכשלו", "error": True}
