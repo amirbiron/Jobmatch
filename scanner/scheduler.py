@@ -108,10 +108,19 @@ def _alert_admin(db, error_msg: str):
     })
 
 
+_scheduler_started = False
+
+
 def start_scheduler(db):
-    """Start the background scheduler"""
+    """Start the background scheduler (ensures only one instance across workers)"""
+    global _scheduler_started
+    if _scheduler_started:
+        logger.info("Scheduler already running — skipping duplicate start")
+        return None
+    _scheduler_started = True
+
     scheduler = BackgroundScheduler()
-    
+
     scheduler.add_job(
         func=lambda: _run_full_cycle(db),
         trigger="interval",
@@ -121,10 +130,10 @@ def start_scheduler(db):
         misfire_grace_time=600,
         next_run_time=None  # Don't run immediately on startup
     )
-    
+
     scheduler.start()
     logger.info(f"Scheduler started — scanning every {Config.SCAN_INTERVAL_HOURS} hours")
-    
+
     return scheduler
 
 
