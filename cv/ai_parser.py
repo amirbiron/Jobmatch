@@ -1,21 +1,20 @@
 import json
 import logging
-import google.generativeai as genai
+import anthropic
 from config import Config
 
 logger = logging.getLogger(__name__)
 
 
 def parse_cv_with_ai(raw_text: str) -> dict:
-    """Send extracted CV text to Gemini and get structured JSON back"""
+    """Send extracted CV text to Claude and get structured JSON back"""
 
-    if not Config.GEMINI_API_KEY:
-        logger.error("GEMINI_API_KEY is not set!")
+    if not Config.ANTHROPIC_API_KEY:
+        logger.error("ANTHROPIC_API_KEY is not set!")
         return {"error": "missing_api_key"}
 
-    genai.configure(api_key=Config.GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-2.0-flash")
-    
+    client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY)
+
     prompt = f"""
 אתה מומחה לניתוח קורות חיים בעברית ואנגלית.
 
@@ -51,19 +50,23 @@ def parse_cv_with_ai(raw_text: str) -> dict:
   "summary": "2-3 משפטים שמסכמים את הפרופיל המקצועי"
 }}
 """
-    
+
     try:
-        response = model.generate_content(prompt)
-        raw_json = response.text.strip()
-        logger.info(f"Gemini response length: {len(raw_json)}")
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw_json = response.content[0].text.strip()
+        logger.info(f"Claude response length: {len(raw_json)}")
 
         # Clean potential markdown wrapping
         raw_json = raw_json.replace("```json", "").replace("```", "").strip()
 
         return json.loads(raw_json)
     except json.JSONDecodeError:
-        logger.error(f"JSON parse failed. Raw response: {response.text[:500] if response else 'no response'}")
-        return {"error": "parse_failed", "raw": response.text[:500] if response else ""}
+        logger.error(f"JSON parse failed. Raw response: {raw_json[:500]}")
+        return {"error": "parse_failed", "raw": raw_json[:500]}
     except Exception as e:
-        logger.error(f"Gemini API error: {type(e).__name__}: {e}")
+        logger.error(f"Claude API error: {type(e).__name__}: {e}")
         return {"error": str(e)}

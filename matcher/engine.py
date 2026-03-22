@@ -1,5 +1,5 @@
 import json
-import google.generativeai as genai
+import anthropic
 from config import Config
 from datetime import datetime
 import logging
@@ -58,27 +58,29 @@ def build_match_prompt(candidate: dict, post_text: str) -> str:
 
 
 def match_candidate_to_post(candidate: dict, post_text: str) -> dict:
-    """Use Gemini to score match between candidate and job post"""
-    
-    genai.configure(api_key=Config.GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-2.0-flash")
-    
+    """Use Claude to score match between candidate and job post"""
+
+    client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY)
     prompt = build_match_prompt(candidate, post_text)
-    
+
     try:
-        response = model.generate_content(prompt)
-        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = response.content[0].text.strip().replace("```json", "").replace("```", "").strip()
         result = json.loads(raw)
-        
+
         # Validate score
         score = result.get("match_score", 0)
         if not isinstance(score, (int, float)) or score < 0 or score > 100:
             result["match_score"] = 0
-        
+
         return result
-        
+
     except json.JSONDecodeError:
-        logger.error(f"Gemini returned invalid JSON: {response.text[:200] if response else 'empty'}")
+        logger.error(f"Claude returned invalid JSON: {raw[:200]}")
         return {"match_score": 0, "match_reason": "שגיאה בניתוח", "error": True}
     except Exception as e:
         logger.error(f"Matching error: {e}")
