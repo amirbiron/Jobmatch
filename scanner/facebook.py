@@ -14,14 +14,15 @@ NAVIGATION_TIMEOUT = 30000  # 30 seconds for cloud environments
 async def _goto_with_retry(page, url: str, timeout: int = NAVIGATION_TIMEOUT, retries: int = 2):
     """Navigate to URL with retry logic for flaky cloud networks"""
     last_error = None
-    for attempt in range(1, retries + 1):
+    max_attempts = 1 + retries
+    for attempt in range(1, max_attempts + 1):
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
             return
         except Exception as e:
             last_error = e
-            logger.warning(f"Navigation to {url} failed (attempt {attempt}/{retries}): {e}")
-            if attempt < retries:
+            logger.warning(f"Navigation to {url} failed (attempt {attempt}/{max_attempts}): {e}")
+            if attempt < max_attempts:
                 await page.wait_for_timeout(2000 * attempt)
     raise last_error
 
