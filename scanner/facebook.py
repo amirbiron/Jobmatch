@@ -304,11 +304,15 @@ class FacebookScanner:
                         post = await self._extract_post_from_element(el, group_url, seen_texts)
                         if post:
                             # Check if we've already seen this post in DB (both hash algorithms)
-                            if find_existing_post(self.db, post["text"], post["url"]):
+                            existing = find_existing_post(self.db, post["text"], post["url"])
+                            if existing:
                                 consecutive_known += 1
+                                # Cache for _dedup_posts to avoid redundant DB lookups
+                                post["_existing"] = existing
                             else:
                                 consecutive_known = 0
                                 new_in_scroll += 1
+                                post["_existing"] = None
                             posts.append(post)
                             if consecutive_known >= KNOWN_THRESHOLD:
                                 logger.info(f"Hit {KNOWN_THRESHOLD} consecutive known posts — stopping scroll")
@@ -360,13 +364,18 @@ class FacebookScanner:
 
         return posts
     
+    _UNCACHED = object()  # sentinel to distinguish "not cached" from "cached as None"
+
     def _dedup_posts(self, posts: list[dict]) -> list[dict]:
         """Dedup posts against DB — returns list with is_new/candidates_sent flags.
-        Checks both new and legacy hash to avoid re-processing after hash migration."""
+        Checks both new and legacy hash to avoid re-processing after hash migration.
+        Uses cached _existing from scan_group when available to avoid redundant DB lookups."""
         result = []
         for post in posts:
             post_hash = create_post_hash(post["text"], post["url"])
-            existing = find_existing_post(self.db, post["text"], post["url"])
+            # Use cached lookup from scan_group if available, otherwise query DB
+            cached = post.pop("_existing", self._UNCACHED)
+            existing = cached if cached is not self._UNCACHED else find_existing_post(self.db, post["text"], post["url"])
 
             if not existing:
                 self.db.scanned_posts.insert_one({
@@ -440,8 +449,9 @@ class FacebookScanner:
                             failed_groups.clear()
                             login_redirect_count = 0
                         continue  # don't dedup empty posts from failed attempt
-                    else:
-                        # Successful scan — retry any previously failed group before clearing
+                    elif posts:
+                        # Got actual posts — session is confirmed working.
+                        # Retry any previously failed groups and reset counter.
                         if failed_groups:
                             logger.info(f"Retrying {len(failed_groups)} previously failed group(s) after successful scan")
                             for retry_url in failed_groups:
@@ -451,6 +461,8 @@ class FacebookScanner:
                                 await asyncio.sleep(random.uniform(2.0, 4.0))
                             failed_groups.clear()
                         login_redirect_count = 0
+                    # else: empty scan without login redirect — ambiguous,
+                    # don't reset counter or retry (group may be legitimately empty)
 
                     all_posts.extend(self._dedup_posts(posts))
 
