@@ -28,6 +28,7 @@ def create_app():
     # Ensure admin user on startup
     if Config.ADMIN_EMAIL:
         admin_email = Config.ADMIN_EMAIL.strip().lower()
+        logging.getLogger(__name__).info(f"ADMIN_EMAIL configured: '{admin_email}'")
         result = db.users.update_one(
             {"email": admin_email},
             {"$set": {"role": "admin"}},
@@ -38,6 +39,8 @@ def create_app():
             logging.getLogger(__name__).warning(
                 f"Admin user {admin_email} not found in DB — will be promoted on first login"
             )
+    else:
+        logging.getLogger(__name__).warning("ADMIN_EMAIL not set — no admin user will be configured")
 
     # Register blueprints
     from dashboard.notifications import notif_bp
