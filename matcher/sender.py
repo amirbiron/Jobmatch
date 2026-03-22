@@ -4,7 +4,7 @@ from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from datetime import datetime
 from config import Config
-import anthropic
+import google.generativeai as genai
 import json
 import logging
 import os
@@ -13,10 +13,11 @@ logger = logging.getLogger(__name__)
 
 
 def generate_email_body(candidate: dict, job_title: str, match_reason: str) -> dict:
-    """Use Claude to write a natural cover email in Hebrew"""
-
-    client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY)
-
+    """Use Gemini to write a natural cover email in Hebrew"""
+    
+    genai.configure(api_key=Config.GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-2.0-flash")
+    
     prompt = f"""
 כתוב מייל קצר ומקצועי בעברית שנשלח למגייס עם קורות חיים.
 הטון: מקצועי אבל אנושי, לא רובוטי.
@@ -35,14 +36,10 @@ def generate_email_body(candidate: dict, job_title: str, match_reason: str) -> d
   "body": "גוף המייל (עם שורות חדשות \\n)"
 }}
 """
-
+    
     try:
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        raw = response.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        response = model.generate_content(prompt)
+        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
         return json.loads(raw)
     except Exception as e:
         logger.error(f"Email generation error: {e}")
