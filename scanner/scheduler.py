@@ -10,6 +10,9 @@ import os
 
 logger = logging.getLogger(__name__)
 
+# Hold the file lock handle at module level so it survives for the process lifetime
+_lock_file = None
+
 # Track scan state
 _scan_state = {
     "last_run": None,
@@ -122,9 +125,9 @@ def start_scheduler(db):
     # Use a file lock so the first worker to acquire it runs the scheduler.
     import fcntl
     try:
+        global _lock_file
         _lock_file = open("/tmp/jobmatch_scheduler.lock", "w")
         fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        # Keep _lock_file open — lock is released when process exits
     except (IOError, OSError):
         logger.info("Another worker owns the scheduler lock — skipping")
         return None
