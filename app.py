@@ -12,7 +12,8 @@ def create_app():
     
     # MongoDB connection
     client = MongoClient(Config.MONGO_URI)
-    db = client.get_default_database()
+    # Use the database name from the URI, or fall back to "jobmatch"
+    db = client.get_default_database(default="jobmatch")
     app.db = db
     
     # Ensure upload folder exists
