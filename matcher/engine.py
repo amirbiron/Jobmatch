@@ -1,10 +1,35 @@
 import json
+import re
 import google.generativeai as genai
 from config import Config
 from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Model priority list — auto-fallback when a model is deprecated/removed
+MODEL_PRIORITY = ["gemini-2.5-flash", "gemini-2.0-flash"]
+_active_model = MODEL_PRIORITY[0]
+
+
+def _parse_json_response(raw: str) -> dict | list:
+    """Parse JSON from API response — handles markdown code blocks.
+    Models sometimes wrap JSON in ```json ... ``` despite instructions."""
+    text = raw.strip()
+    # Unwrap markdown code block
+    md_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', text, re.DOTALL)
+    if md_match:
+        text = md_match.group(1).strip()
+    return json.loads(text)
+
+
+def _is_model_deprecated(e: Exception) -> bool:
+    """Check if API error indicates the model is deprecated/removed."""
+    status = getattr(e, 'status_code', None) or getattr(e, 'code', None)
+    if status in (404, 410):
+        return True
+    msg = str(e).lower()
+    return any(h in msg for h in ["deprecated", "does not exist", "model not found", "not supported"])
 
 
 def build_match_prompt(candidate: dict, post_text: str) -> str:
@@ -58,31 +83,46 @@ def build_match_prompt(candidate: dict, post_text: str) -> str:
 
 
 def match_candidate_to_post(candidate: dict, post_text: str) -> dict:
-    """Use Gemini to score match between candidate and job post"""
-    
+    """Use Gemini to score match between candidate and job post.
+    Auto-fallback to next model if current one is deprecated."""
+    global _active_model
+
     genai.configure(api_key=Config.GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-3.1-pro-preview")
-    
     prompt = build_match_prompt(candidate, post_text)
-    
-    try:
-        response = model.generate_content(prompt)
-        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
-        result = json.loads(raw)
-        
-        # Validate score
-        score = result.get("match_score", 0)
-        if not isinstance(score, (int, float)) or score < 0 or score > 100:
-            result["match_score"] = 0
-        
-        return result
-        
-    except json.JSONDecodeError:
-        logger.error(f"Gemini returned invalid JSON: {response.text[:200] if response else 'empty'}")
-        return {"match_score": 0, "match_reason": "שגיאה בניתוח", "error": True}
-    except Exception as e:
-        logger.error(f"Matching error: {e}")
-        return {"match_score": 0, "match_reason": str(e), "error": True}
+
+    # Try active model, then fallback models
+    models_to_try = [_active_model] + [m for m in MODEL_PRIORITY if m != _active_model]
+
+    for model_name in models_to_try:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            result = _parse_json_response(response.text)
+
+            # Validate score
+            score = result.get("match_score", 0)
+            if not isinstance(score, (int, float)) or score < 0 or score > 100:
+                result["match_score"] = 0
+
+            # Update active model if we fell back successfully
+            if model_name != _active_model:
+                logger.warning(f"Switched active model from {_active_model} to {model_name}")
+                _active_model = model_name
+
+            return result
+
+        except (json.JSONDecodeError, ValueError, KeyError):
+            logger.error(f"Gemini returned invalid JSON: {response.text[:200] if response else 'empty'}")
+            return {"match_score": 0, "match_reason": "שגיאה בניתוח", "error": True}
+        except Exception as e:
+            if _is_model_deprecated(e):
+                logger.warning(f"Model {model_name} appears deprecated: {e}")
+                continue  # try next model
+            logger.error(f"Matching error with {model_name}: {e}")
+            return {"match_score": 0, "match_reason": str(e), "error": True}
+
+    logger.error("All models failed — no available model")
+    return {"match_score": 0, "match_reason": "כל המודלים נכשלו", "error": True}
 
 
 def run_matching_for_all_candidates(db, posts: list[dict]):

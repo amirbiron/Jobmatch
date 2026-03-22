@@ -63,41 +63,55 @@ def _stable_text_for_hash(text: str) -> str:
     return ' '.join(stable).strip()
 
 
-def _legacy_post_hash(post_text: str, post_url: str) -> str:
-    """Original hash algorithm — needed to match existing DB entries."""
+def _legacy_post_hash_v1(post_text: str, post_url: str) -> str:
+    """Original hash algorithm (v1) — raw text[:200] + full URL."""
     content = f"{post_url}:{post_text[:200]}"
     return hashlib.sha256(content.encode()).hexdigest()
 
 
-def create_post_hash(post_text: str, post_url: str) -> str:
-    """Create stable hash for a post — uses first 150 chars of normalized text.
-    150 chars captures the core content; dynamic tail (comments, engagement) is excluded."""
+def _legacy_post_hash_v2(post_text: str, post_url: str) -> str:
+    """Second hash algorithm (v2) — normalized text[:150] + base URL."""
     normalized = _stable_text_for_hash(post_text)
-    # Use URL base (without query params) + stable text prefix
     base_url = post_url.split('?')[0] if post_url else ''
     core = f"{base_url}:{normalized[:150]}"
     return hashlib.sha256(core.encode()).hexdigest()
 
 
+def create_post_hash(post_text: str, post_url: str) -> str:
+    """Create stable hash for a post — uses first 12 words of normalized text.
+    12 words captures the core content (title + first sentence) without
+    including dynamic tails (comments, engagement) that change between scans.
+    Word-based cutoff is more stable than char-based for short posts."""
+    normalized = _stable_text_for_hash(post_text)
+    # Use URL base (without query params) + first 12 words
+    base_url = post_url.split('?')[0] if post_url else ''
+    words = normalized.split()[:12]
+    core = f"{base_url}:{' '.join(words)}"
+    return hashlib.sha256(core.encode()).hexdigest()
+
+
 def find_existing_post(db, post_text: str, post_url: str) -> dict | None:
-    """Find an existing post by new hash OR legacy hash — prevents
-    treating already-seen posts as new after the hash algorithm change."""
-    new_hash = create_post_hash(post_text, post_url)
-    existing = db.scanned_posts.find_one({"hash": new_hash})
+    """Find an existing post by current hash OR any legacy hash — prevents
+    treating already-seen posts as new after hash algorithm changes.
+    Migration chain: v1 → v2 → v3 (current, 12-word)."""
+    current_hash = create_post_hash(post_text, post_url)
+    existing = db.scanned_posts.find_one({"hash": current_hash})
     if existing:
         return existing
 
-    # Fallback: check legacy hash for posts stored before the migration
-    legacy = _legacy_post_hash(post_text, post_url)
-    existing = db.scanned_posts.find_one({"hash": legacy})
-    if existing:
-        # Migrate: add new hash so future lookups are fast
-        db.scanned_posts.update_one(
-            {"_id": existing["_id"]},
-            {"$set": {"hash": new_hash}}
-        )
-        logger.info(f"Migrated post hash for {post_url}")
-    return existing
+    # Check legacy hashes (v2: 150-char, v1: 200-char raw)
+    for legacy_fn in (_legacy_post_hash_v2, _legacy_post_hash_v1):
+        legacy = legacy_fn(post_text, post_url)
+        existing = db.scanned_posts.find_one({"hash": legacy})
+        if existing:
+            # Migrate to current hash for fast future lookups
+            db.scanned_posts.update_one(
+                {"_id": existing["_id"]},
+                {"$set": {"hash": current_hash}}
+            )
+            logger.info(f"Migrated post hash for {post_url}")
+            return existing
+    return None
 
 
 def extract_email_from_text(text: str) -> str | None:
