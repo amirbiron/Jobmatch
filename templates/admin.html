@@ -101,7 +101,7 @@
                 document.getElementById('aFailed').textContent = stats.matches_failed;
             } catch (e) {
                 if (e.message === 'session_expired') return;
-                const msg = e.message.includes('הרשאה')
+                const msg = e.message.includes('מנהלים')
                     ? 'אין גישת אדמין — רק מנהלים יכולים לגשת לדף זה'
                     : 'שגיאת שרת — נסה שוב מאוחר יותר';
                 showError('errorMsg', msg);
