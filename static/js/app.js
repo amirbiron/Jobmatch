@@ -64,9 +64,13 @@ const API = {
             
             if (response.status === 401) {
                 this.logout();
-                return null;
+                throw new Error('session_expired');
             }
-            
+
+            if (response.status === 403) {
+                throw new Error(data.error || 'אין הרשאה');
+            }
+
             if (!response.ok) {
                 throw new Error(data.error || 'שגיאה בשרת');
             }

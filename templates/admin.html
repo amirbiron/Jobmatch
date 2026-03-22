@@ -100,7 +100,11 @@
                 document.getElementById('aSent').textContent = stats.matches_sent;
                 document.getElementById('aFailed').textContent = stats.matches_failed;
             } catch (e) {
-                showError('errorMsg', 'אין גישת אדמין או שגיאת שרת');
+                if (e.message === 'session_expired') return;
+                const msg = e.message.includes('הרשאה')
+                    ? 'אין גישת אדמין — רק מנהלים יכולים לגשת לדף זה'
+                    : 'שגיאת שרת — נסה שוב מאוחר יותר';
+                showError('errorMsg', msg);
                 return;
             }
 
