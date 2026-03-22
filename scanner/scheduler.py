@@ -117,24 +117,27 @@ def start_scheduler(db):
     if _scheduler_started:
         logger.info("Scheduler already running — skipping duplicate start")
         return None
-    _scheduler_started = True
 
-    scheduler = BackgroundScheduler()
+    try:
+        scheduler = BackgroundScheduler()
 
-    scheduler.add_job(
-        func=lambda: _run_full_cycle(db),
-        trigger="interval",
-        hours=Config.SCAN_INTERVAL_HOURS,
-        id="facebook_scan",
-        max_instances=1,
-        misfire_grace_time=600,
-        next_run_time=None  # Don't run immediately on startup
-    )
+        scheduler.add_job(
+            func=lambda: _run_full_cycle(db),
+            trigger="interval",
+            hours=Config.SCAN_INTERVAL_HOURS,
+            id="facebook_scan",
+            max_instances=1,
+            misfire_grace_time=600,
+            next_run_time=None  # Don't run immediately on startup
+        )
 
-    scheduler.start()
-    logger.info(f"Scheduler started — scanning every {Config.SCAN_INTERVAL_HOURS} hours")
-
-    return scheduler
+        scheduler.start()
+        _scheduler_started = True
+        logger.info(f"Scheduler started — scanning every {Config.SCAN_INTERVAL_HOURS} hours")
+        return scheduler
+    except Exception as e:
+        logger.error(f"Failed to start scheduler: {e}", exc_info=True)
+        return None
 
 
 def trigger_manual_scan(db):
