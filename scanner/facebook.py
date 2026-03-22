@@ -492,6 +492,8 @@ class FacebookScanner:
                     if not posts and self._is_login_redirect(page.url, group_url):
                         login_redirect_count += 1
                         failed_groups.append(group_url)
+                        # Clear stale login URL so next iteration doesn't false-positive
+                        await page.goto("about:blank")
                         if login_redirect_count >= 2:
                             logger.warning("Multiple groups redirected to login — forcing re-login...")
                             if not await ensure_session(force=True):
