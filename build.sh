@@ -3,4 +3,5 @@ set -e
 
 pip install -r requirements.txt
 playwright install chromium
-playwright install-deps
+# Note: 'playwright install-deps' requires root and is handled by the Dockerfile for deployment.
+# For local development, run: sudo playwright install-deps
