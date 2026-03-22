@@ -3,6 +3,8 @@ from scanner.session_manager import SessionManager
 from datetime import datetime, timedelta
 import hashlib
 import asyncio
+import gc
+import random
 import re
 import logging
 import os
@@ -11,6 +13,13 @@ logger = logging.getLogger(__name__)
 
 NAVIGATION_TIMEOUT = 30000  # 30 seconds for cloud environments
 DEBUG_SCREENSHOTS = os.getenv("DEBUG_SCREENSHOTS", "").lower() in ("1", "true", "yes")
+
+# Resource types to block — saves ~60% memory
+BLOCKED_RESOURCE_TYPES = {"image", "media", "font"}
+
+# Smart scroll settings
+MAX_SCROLLS = 8
+KNOWN_THRESHOLD = 3  # consecutive known posts before stopping
 
 
 async def _goto_with_retry(page, url: str, timeout: int = NAVIGATION_TIMEOUT, retries: int = 2):
@@ -29,10 +38,39 @@ async def _goto_with_retry(page, url: str, timeout: int = NAVIGATION_TIMEOUT, re
     raise last_error
 
 
+def _stable_text_for_hash(text: str) -> str:
+    """Normalize text so the same post gets the same hash across scans.
+    Removes dynamic engagement counters, invisible chars, and URLs with tracking params."""
+    text = text.lower()
+    # Remove URLs (tracking params change between scans)
+    text = re.sub(r'https?://\S+', '', text)
+    # Remove invisible/bidi/PUA chars
+    text = re.sub(r'[\u200e\u200f\u200b\u200c\u200d\u2060\ufeff]', '', text)
+    text = re.sub(r'[\uE000-\uF8FF\U000F0000-\U0010FFFD]', '', text)
+    lines = text.split('\n')
+    stable = []
+    for line in lines:
+        s = line.strip()
+        if not s:
+            continue
+        # Skip standalone numbers (like counts, engagement)
+        if re.match(r'^\d[\d,. ]*$', s):
+            continue
+        # Skip engagement patterns: "5 תגובות", "3 שיתופים"
+        if re.match(r'^\d+\s+\S+$', s):
+            continue
+        stable.append(s)
+    return ' '.join(stable).strip()
+
+
 def create_post_hash(post_text: str, post_url: str) -> str:
-    """Create unique hash for a post based on text + URL"""
-    content = f"{post_url}:{post_text[:200]}"
-    return hashlib.sha256(content.encode()).hexdigest()
+    """Create stable hash for a post — uses first 150 chars of normalized text.
+    150 chars captures the core content; dynamic tail (comments, engagement) is excluded."""
+    normalized = _stable_text_for_hash(post_text)
+    # Use URL base (without query params) + stable text prefix
+    base_url = post_url.split('?')[0] if post_url else ''
+    core = f"{base_url}:{normalized[:150]}"
+    return hashlib.sha256(core.encode()).hexdigest()
 
 
 def extract_email_from_text(text: str) -> str | None:
@@ -48,7 +86,7 @@ class FacebookScanner:
         self.session_manager = SessionManager(db)
     
     async def _create_context(self, playwright):
-        """Create browser context with saved session"""
+        """Create browser context with saved session — mobile viewport for lower memory"""
         browser = await playwright.chromium.launch(
             headless=True,
             args=[
@@ -59,24 +97,34 @@ class FacebookScanner:
                 "--disable-software-rasterizer",
             ]
         )
-        
+
         # Try loading existing session
         storage_state = self.session_manager.load_session()
-        
+
         context_options = {
-            "viewport": {"width": 1280, "height": 800},
+            "viewport": {"width": 360, "height": 640},  # mobile = lighter DOM
             "locale": "he-IL",
             "user_agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "Mozilla/5.0 (Linux; Android 13; Pixel 7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/131.0.0.0 Safari/537.36"
+                "Chrome/131.0.0.0 Mobile Safari/537.36"
             )
         }
-        
+
         if storage_state:
             context_options["storage_state"] = storage_state
-        
+
         context = await browser.new_context(**context_options)
+
+        # Block heavy resources — saves ~60% memory
+        async def _block_resources(route):
+            if route.request.resource_type in BLOCKED_RESOURCE_TYPES:
+                await route.abort()
+            else:
+                await route.continue_()
+
+        await context.route("**/*", _block_resources)
+
         return browser, context
     
     async def _check_session_valid(self, page) -> bool:
@@ -191,11 +239,6 @@ class FacebookScanner:
                     logger.warning(f"Redirected to {current_url} instead of group — session may be invalid")
                     return posts
 
-            # Scroll to load more posts
-            for scroll_i in range(3):
-                await page.evaluate("window.scrollBy(0, window.innerHeight)")
-                await page.wait_for_timeout(2000)
-
             # Save debug screenshot if enabled
             if DEBUG_SCREENSHOTS:
                 try:
@@ -206,21 +249,44 @@ class FacebookScanner:
                 except Exception as e:
                     logger.warning(f"Failed to save debug screenshot: {e}")
 
-            # Strategy 1: article-based extraction (most reliable)
-            articles = await page.query_selector_all("[role='article']")
-            logger.info(f"Found {len(articles)} article elements in {group_url}")
-
+            # Smart scroll — track by content, stop after consecutive known posts
             seen_texts = set()
+            consecutive_known = 0
 
-            for el in articles:
-                try:
-                    post = await self._extract_post_from_element(el, group_url, seen_texts)
-                    if post:
-                        posts.append(post)
-                except Exception:
-                    continue
+            for scroll_num in range(MAX_SCROLLS):
+                # Extract articles after each scroll
+                articles = await page.query_selector_all("[role='article']")
+                new_in_scroll = 0
 
-            # Strategy 2+3: fallback selectors (only if articles didn't yield results)
+                for el in articles:
+                    try:
+                        post = await self._extract_post_from_element(el, group_url, seen_texts)
+                        if post:
+                            # Check if we've already seen this post in DB
+                            post_hash = create_post_hash(post["text"], post["url"])
+                            if self.db.scanned_posts.find_one({"hash": post_hash}):
+                                consecutive_known += 1
+                                if consecutive_known >= KNOWN_THRESHOLD:
+                                    logger.info(f"Hit {KNOWN_THRESHOLD} consecutive known posts — stopping scroll")
+                                    break
+                            else:
+                                consecutive_known = 0
+                                new_in_scroll += 1
+                            posts.append(post)
+                    except Exception:
+                        continue
+
+                if consecutive_known >= KNOWN_THRESHOLD:
+                    break
+
+                if scroll_num > 0 and new_in_scroll == 0:
+                    break  # scroll didn't yield new content
+
+                # Scroll down
+                await page.evaluate("window.scrollBy(0, 1500)")
+                await asyncio.sleep(random.uniform(1.5, 3.0))
+
+            # Fallback selectors if articles didn't yield results
             if not posts:
                 post_elements = await page.query_selector_all(
                     "[data-ad-comet-preview='message'], "
@@ -328,8 +394,9 @@ class FacebookScanner:
                             post["candidates_sent"] = existing.get("candidates_sent", [])
                             all_posts.append(post)
 
-                    # Polite delay between groups
-                    await page.wait_for_timeout(3000)
+                    # Free DOM memory and polite delay between groups
+                    await page.goto("about:blank")
+                    await asyncio.sleep(random.uniform(2.0, 4.0))
                 
             finally:
                 # Save updated session
@@ -339,6 +406,9 @@ class FacebookScanner:
                 except:
                     pass
                 await browser.close()
-        
+
+        # Free browser memory before classification/matching
+        gc.collect()
+
         logger.info(f"Total posts collected: {len(all_posts)} ({sum(1 for p in all_posts if p.get('is_new'))} new)")
         return all_posts

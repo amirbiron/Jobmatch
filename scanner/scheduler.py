@@ -5,6 +5,7 @@ from matcher.sender import process_pending_matches
 from config import Config
 from datetime import datetime
 import asyncio
+import gc
 import logging
 import os
 
@@ -61,6 +62,9 @@ def _run_full_cycle(db):
             )
         )
         loop.close()
+
+        # Free browser/playwright memory before matching + sending
+        gc.collect()
         
         _scan_state["posts_found"] = len(posts)
         logger.info(f"Scan complete: {len(posts)} posts")
