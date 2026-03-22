@@ -55,7 +55,6 @@ class FacebookScanner:
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--disable-software-rasterizer",
-                "--single-process",
             ]
         )
         

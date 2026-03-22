@@ -153,6 +153,9 @@ def start_scheduler(db):
         return scheduler
     except Exception as e:
         logger.error(f"Failed to start scheduler: {e}", exc_info=True)
+        if _lock_file:
+            _lock_file.close()
+            _lock_file = None
         return None
 
 
