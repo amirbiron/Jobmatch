@@ -53,11 +53,15 @@ def login_required(f):
 
 
 def admin_required(f):
-    """Decorator — requires admin role"""
+    """Decorator — requires admin role (verified from DB)"""
     @wraps(f)
     @login_required
     def decorated(*args, **kwargs):
-        if request.user_role != "admin":
+        from bson import ObjectId
+        db = current_app.db
+        user = db.users.find_one({"_id": ObjectId(request.user_id)}, {"role": 1})
+        if not user or user.get("role") != "admin":
             return jsonify({"error": "גישה מוגבלת למנהלים"}), 403
+        request.user_role = "admin"
         return f(*args, **kwargs)
     return decorated
