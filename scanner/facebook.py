@@ -271,14 +271,9 @@ class FacebookScanner:
             await page.wait_for_timeout(4000)
 
             # Check if we were redirected away from the group (login/checkpoint)
-            current_url = page.url
-            if current_url != group_url and not current_url.startswith(group_url):
-                from urllib.parse import urlparse
-                parsed = urlparse(current_url)
-                path = parsed.path.lower()
-                if "/login" in path or "/checkpoint" in path or "/captcha" in path:
-                    logger.warning(f"Redirected to {current_url} instead of group — session may be invalid")
-                    return posts
+            if self._is_login_redirect(page.url, group_url):
+                logger.warning(f"Redirected to {page.url} instead of group — session may be invalid")
+                return posts
 
             # Save debug screenshot if enabled
             if DEBUG_SCREENSHOTS:
@@ -398,6 +393,17 @@ class FacebookScanner:
                 result.append(post)
         return result
 
+    @staticmethod
+    def _is_login_redirect(page_url: str, group_url: str) -> bool:
+        """Check if page was redirected to a login/checkpoint page.
+        Uses urlparse on the path only — avoids false positives on group URLs
+        that contain 'login' as a substring (e.g. /groups/loginhelpers/)."""
+        if page_url == group_url or page_url.startswith(group_url):
+            return False  # still on the group page
+        from urllib.parse import urlparse
+        path = urlparse(page_url).path.lower()
+        return "/login" in path or "/checkpoint" in path or "/captcha" in path
+
     async def scan_all_groups(self, group_urls: list[str], fb_email: str, fb_password: str) -> list[dict]:
         """Full scan cycle — login if needed, scan all groups, deduplicate"""
         all_posts = []
@@ -446,7 +452,7 @@ class FacebookScanner:
                     posts = await self.scan_group(page, group_url)
 
                     # Detect login redirects — collect failed groups, re-login after 2 consecutive
-                    if not posts and "/login" in page.url.lower():
+                    if not posts and self._is_login_redirect(page.url, group_url):
                         login_redirect_count += 1
                         failed_groups.append(group_url)
                         if login_redirect_count >= 2:
