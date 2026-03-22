@@ -409,6 +409,9 @@ class FacebookScanner:
             try:
                 # Ensure we have a valid session
                 async def ensure_session(force=False):
+                    if force:
+                        # Clear browser cookies so _login sees the login form
+                        await page.context.clear_cookies()
                     if force or not await self._check_session_valid(page):
                         logger.info("Session invalid — logging in...")
                         self.session_manager.invalidate_session()
@@ -420,6 +423,17 @@ class FacebookScanner:
                 if not await ensure_session():
                     await browser.close()
                     return []
+
+                async def retry_failed(groups: list[str], reason: str):
+                    """Retry a list of failed group URLs, dedup results into all_posts."""
+                    if not groups:
+                        return
+                    logger.info(f"Retrying {len(groups)} group(s) — {reason}")
+                    for retry_url in groups:
+                        retry_posts = await self.scan_group(page, retry_url)
+                        all_posts.extend(self._dedup_posts(retry_posts))
+                        await page.goto("about:blank")
+                        await asyncio.sleep(random.uniform(2.0, 4.0))
 
                 # Scan each group — track login failures for mid-scan re-login
                 login_redirect_count = 0
@@ -440,26 +454,15 @@ class FacebookScanner:
                             if not await ensure_session(force=True):
                                 logger.error("Re-login failed — aborting scan")
                                 break
-                            # Retry ALL failed groups (including the first one)
-                            for retry_url in failed_groups:
-                                retry_posts = await self.scan_group(page, retry_url)
-                                all_posts.extend(self._dedup_posts(retry_posts))
-                                await page.goto("about:blank")
-                                await asyncio.sleep(random.uniform(2.0, 4.0))
+                            await retry_failed(failed_groups, "after mid-scan re-login")
                             failed_groups.clear()
                             login_redirect_count = 0
                         continue  # don't dedup empty posts from failed attempt
                     elif posts:
                         # Got actual posts — session is confirmed working.
                         # Retry any previously failed groups and reset counter.
-                        if failed_groups:
-                            logger.info(f"Retrying {len(failed_groups)} previously failed group(s) after successful scan")
-                            for retry_url in failed_groups:
-                                retry_posts = await self.scan_group(page, retry_url)
-                                all_posts.extend(self._dedup_posts(retry_posts))
-                                await page.goto("about:blank")
-                                await asyncio.sleep(random.uniform(2.0, 4.0))
-                            failed_groups.clear()
+                        await retry_failed(failed_groups, "session confirmed working")
+                        failed_groups.clear()
                         login_redirect_count = 0
                     # else: empty scan without login redirect — ambiguous,
                     # don't reset counter or retry (group may be legitimately empty)
@@ -472,13 +475,9 @@ class FacebookScanner:
 
                 # After loop — retry any remaining failed groups (e.g. last group(s) failed)
                 if failed_groups:
-                    logger.warning(f"End of scan loop — retrying {len(failed_groups)} failed group(s)...")
+                    logger.warning(f"End of scan loop — {len(failed_groups)} failed group(s) remain")
                     if await ensure_session(force=True):
-                        for retry_url in failed_groups:
-                            retry_posts = await self.scan_group(page, retry_url)
-                            all_posts.extend(self._dedup_posts(retry_posts))
-                            await page.goto("about:blank")
-                            await asyncio.sleep(random.uniform(2.0, 4.0))
+                        await retry_failed(failed_groups, "end-of-loop re-login")
                     else:
                         logger.error(f"Re-login failed — {len(failed_groups)} group(s) skipped this cycle")
                     failed_groups.clear()
