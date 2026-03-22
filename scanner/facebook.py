@@ -306,13 +306,13 @@ class FacebookScanner:
                             # Check if we've already seen this post in DB (both hash algorithms)
                             if find_existing_post(self.db, post["text"], post["url"]):
                                 consecutive_known += 1
-                                if consecutive_known >= KNOWN_THRESHOLD:
-                                    logger.info(f"Hit {KNOWN_THRESHOLD} consecutive known posts — stopping scroll")
-                                    break
                             else:
                                 consecutive_known = 0
                                 new_in_scroll += 1
                             posts.append(post)
+                            if consecutive_known >= KNOWN_THRESHOLD:
+                                logger.info(f"Hit {KNOWN_THRESHOLD} consecutive known posts — stopping scroll")
+                                break
                     except Exception:
                         continue
 
