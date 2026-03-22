@@ -61,7 +61,10 @@ def match_candidate_to_post(candidate: dict, post_text: str) -> dict:
     """Use Gemini to score match between candidate and job post"""
     
     genai.configure(api_key=Config.GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    model = genai.GenerativeModel(
+        "gemini-2.5-flash",
+        generation_config=genai.GenerationConfig(thinking_config={"thinking_budget": 0}),
+    )
     
     prompt = build_match_prompt(candidate, post_text)
     
