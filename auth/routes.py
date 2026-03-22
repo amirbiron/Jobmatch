@@ -1,7 +1,11 @@
 from flask import Blueprint, request, jsonify, current_app
 from datetime import datetime
 from auth.middleware import hash_password, check_password, create_token, login_required
+from config import Config
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -39,10 +43,16 @@ def register():
         "created_at": datetime.utcnow()
     }
     
+    # Promote to admin if email matches ADMIN_EMAIL
+    admin_email = (Config.ADMIN_EMAIL or "").strip().lower()
+    if admin_email and email == admin_email:
+        user["role"] = "admin"
+        logger.info(f"New user {email} promoted to admin on registration")
+
     result = db.users.insert_one(user)
     user_id = str(result.inserted_id)
-    
-    token = create_token(user_id)
+
+    token = create_token(user_id, user["role"])
     
     return jsonify({
         "token": token,
@@ -71,7 +81,14 @@ def login():
     
     if not user.get("is_active", True):
         return jsonify({"error": "החשבון מושבת"}), 403
-    
+
+    # Promote to admin on login if email matches ADMIN_EMAIL
+    admin_email = (Config.ADMIN_EMAIL or "").strip().lower()
+    if admin_email and email == admin_email and user.get("role") != "admin":
+        db.users.update_one({"_id": user["_id"]}, {"$set": {"role": "admin"}})
+        user["role"] = "admin"
+        logger.info(f"User {email} promoted to admin on login")
+
     user_id = str(user["_id"])
     token = create_token(user_id, user.get("role", "user"))
     
