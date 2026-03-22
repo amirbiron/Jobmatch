@@ -121,6 +121,8 @@ def start_scheduler(db):
     try:
         scheduler = BackgroundScheduler()
 
+        from datetime import datetime, timedelta
+
         scheduler.add_job(
             func=lambda: _run_full_cycle(db),
             trigger="interval",
@@ -128,12 +130,12 @@ def start_scheduler(db):
             id="facebook_scan",
             max_instances=1,
             misfire_grace_time=600,
-            next_run_time=None  # Don't run immediately on startup
+            next_run_time=datetime.now() + timedelta(seconds=30)
         )
 
         scheduler.start()
         _scheduler_started = True
-        logger.info(f"Scheduler started — scanning every {Config.SCAN_INTERVAL_HOURS} hours")
+        logger.info(f"Scheduler started — first scan in 30s, then every {Config.SCAN_INTERVAL_HOURS} hours")
         return scheduler
     except Exception as e:
         logger.error(f"Failed to start scheduler: {e}", exc_info=True)
