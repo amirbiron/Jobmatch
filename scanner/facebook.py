@@ -168,17 +168,28 @@ class FacebookScanner:
 
         return browser, context
     
+    # Selectors that match login forms on both desktop and mobile Facebook
+    _LOGIN_SELECTORS = [
+        "[name='login']",           # desktop: main login button
+        "#email",                    # desktop: email input
+        "#loginbutton",             # mobile: login button
+        "input[name='email']",      # mobile: email input
+        "#login_form",              # mobile: login form container
+        "button[name='login']",     # mobile: button variant
+    ]
+
     async def _check_session_valid(self, page) -> bool:
         """Check if Facebook session is still active by visiting the main page"""
         try:
             await _goto_with_retry(page, "https://www.facebook.com")
             await page.wait_for_timeout(3000)
 
-            # If we see login form — session is expired
-            login_btn = await page.query_selector("[name='login']")
-            if login_btn:
-                logger.warning("Session check: login button found — session expired")
-                return False
+            # If we see any login form element — session is expired
+            for selector in self._LOGIN_SELECTORS:
+                el = await page.query_selector(selector)
+                if el:
+                    logger.warning(f"Session check: login element '{selector}' found — session expired")
+                    return False
 
             # Check for checkpoint/captcha pages
             page_url = page.url
@@ -198,21 +209,47 @@ class FacebookScanner:
             return False
     
     async def _login(self, page, email: str, password: str) -> bool:
-        """Login to Facebook and save session"""
+        """Login to Facebook and save session.
+        Handles both desktop and mobile login forms — Facebook may serve
+        either depending on UA string, viewport, or A/B testing."""
         try:
             await _goto_with_retry(page, "https://www.facebook.com")
             await page.wait_for_timeout(2000)
-            
-            await page.fill("#email", email)
-            await page.fill("#pass", password)
-            await page.click("[name='login']")
-            await page.wait_for_timeout(5000)
-            
-            # Check if login succeeded
-            login_btn = await page.query_selector("[name='login']")
-            if login_btn:
-                logger.error("Login failed — wrong credentials or captcha")
+
+            # Find email field — desktop (#email) or mobile (input[name='email'])
+            email_field = await page.query_selector("#email") or await page.query_selector("input[name='email']")
+            if not email_field:
+                logger.error("Login failed — no email field found (unexpected page layout)")
                 return False
+
+            # Find password field
+            pass_field = await page.query_selector("#pass") or await page.query_selector("input[name='pass']")
+            if not pass_field:
+                logger.error("Login failed — no password field found")
+                return False
+
+            await email_field.fill(email)
+            await pass_field.fill(password)
+
+            # Find and click login button — desktop or mobile variants
+            login_btn = None
+            for selector in ["[name='login']", "#loginbutton", "button[name='login']", "button[type='submit']"]:
+                login_btn = await page.query_selector(selector)
+                if login_btn:
+                    break
+            if not login_btn:
+                logger.error("Login failed — no login button found")
+                return False
+
+            await login_btn.click()
+            await page.wait_for_timeout(5000)
+
+            # Check if login succeeded — any login element still visible means failure
+            for selector in self._LOGIN_SELECTORS:
+                el = await page.query_selector(selector)
+                if el:
+                    logger.error(f"Login failed — '{selector}' still present (wrong credentials or captcha)")
+                    return False
             
             # Save session to MongoDB
             storage_state = await page.context.storage_state()
@@ -292,12 +329,13 @@ class FacebookScanner:
             for scroll_num in range(MAX_SCROLLS):
                 # Extract articles after each scroll
                 articles = await page.query_selector_all("[role='article']")
-                new_in_scroll = 0
+                new_dom_elements = 0  # new elements from DOM (not in seen_texts)
 
                 for el in articles:
                     try:
                         post = await self._extract_post_from_element(el, group_url, seen_texts)
                         if post:
+                            new_dom_elements += 1
                             # Check if we've already seen this post in DB (both hash algorithms)
                             existing = find_existing_post(self.db, post["text"], post["url"])
                             if existing:
@@ -306,7 +344,6 @@ class FacebookScanner:
                                 post["_existing"] = existing
                             else:
                                 consecutive_known = 0
-                                new_in_scroll += 1
                                 post["_existing"] = None
                             posts.append(post)
                             if consecutive_known >= KNOWN_THRESHOLD:
@@ -318,8 +355,8 @@ class FacebookScanner:
                 if consecutive_known >= KNOWN_THRESHOLD:
                     break
 
-                if scroll_num > 0 and new_in_scroll == 0:
-                    break  # scroll didn't yield new content
+                if scroll_num > 0 and new_dom_elements == 0:
+                    break  # scroll didn't load any new DOM content
 
                 # Scroll down
                 await page.evaluate("window.scrollBy(0, 1500)")
