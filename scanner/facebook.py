@@ -80,7 +80,7 @@ class FacebookScanner:
         return browser, context
     
     async def _check_session_valid(self, page) -> bool:
-        """Check if Facebook session is still active"""
+        """Check if Facebook session is still active by visiting the main page"""
         try:
             await _goto_with_retry(page, "https://www.facebook.com")
             await page.wait_for_timeout(3000)
@@ -97,7 +97,11 @@ class FacebookScanner:
                 logger.warning(f"Session check: checkpoint/captcha detected at {page_url}")
                 return False
 
-            # If we see the main feed — we're logged in
+            # Check if redirected to login
+            if "/login" in page_url.lower():
+                logger.warning(f"Session check: redirected to login — session expired")
+                return False
+
             logger.info("Session check: valid session detected")
             return True
         except Exception as e:
@@ -259,30 +263,49 @@ class FacebookScanner:
             page = await context.new_page()
             
             try:
-                # Check session
-                if not await self._check_session_valid(page):
-                    logger.info("Session invalid — logging in...")
-                    self.session_manager.invalidate_session()
-                    
-                    if not await self._login(page, fb_email, fb_password):
-                        logger.error("Could not login to Facebook")
-                        await browser.close()
-                        return []
-                
+                # Ensure we have a valid session
+                async def ensure_session():
+                    if not await self._check_session_valid(page):
+                        logger.info("Session invalid — logging in...")
+                        self.session_manager.invalidate_session()
+                        if not await self._login(page, fb_email, fb_password):
+                            logger.error("Could not login to Facebook")
+                            return False
+                    return True
+
+                if not await ensure_session():
+                    await browser.close()
+                    return []
+
                 # Scan each group
+                login_redirect_count = 0
                 for group_url in group_urls:
                     group_url = group_url.strip()
                     if not group_url:
                         continue
-                    
+
                     posts = await self.scan_group(page, group_url)
-                    
+
+                    # Detect login redirects — attempt re-login once after 2 consecutive failures
+                    if not posts and "/login" in page.url.lower():
+                        login_redirect_count += 1
+                        if login_redirect_count >= 2:
+                            logger.warning("Multiple groups redirected to login — session expired mid-scan, re-logging in...")
+                            if not await ensure_session():
+                                logger.error("Re-login failed — aborting scan")
+                                break
+                            # Retry this group after re-login
+                            posts = await self.scan_group(page, group_url)
+                            login_redirect_count = 0
+                    else:
+                        login_redirect_count = 0
+
                     # Deduplication — filter already-seen posts
                     for post in posts:
                         post_hash = create_post_hash(post["text"], post["url"])
-                        
+
                         existing = self.db.scanned_posts.find_one({"hash": post_hash})
-                        
+
                         if not existing:
                             # New post — save it
                             self.db.scanned_posts.insert_one({
@@ -304,7 +327,7 @@ class FacebookScanner:
                             post["is_new"] = False
                             post["candidates_sent"] = existing.get("candidates_sent", [])
                             all_posts.append(post)
-                    
+
                     # Polite delay between groups
                     await page.wait_for_timeout(3000)
                 
