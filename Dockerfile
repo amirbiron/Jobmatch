@@ -5,8 +5,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browser + its system dependencies automatically
-RUN playwright install --with-deps chromium
+# Install Playwright system dependencies, then the browser
+RUN apt-get update && playwright install-deps chromium && rm -rf /var/lib/apt/lists/*
+RUN playwright install chromium
 
 COPY . .
 
