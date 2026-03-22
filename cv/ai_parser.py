@@ -1,11 +1,18 @@
 import json
+import logging
 import google.generativeai as genai
 from config import Config
+
+logger = logging.getLogger(__name__)
 
 
 def parse_cv_with_ai(raw_text: str) -> dict:
     """Send extracted CV text to Gemini and get structured JSON back"""
-    
+
+    if not Config.GEMINI_API_KEY:
+        logger.error("GEMINI_API_KEY is not set!")
+        return {"error": "missing_api_key"}
+
     genai.configure(api_key=Config.GEMINI_API_KEY)
     model = genai.GenerativeModel("gemini-2.0-flash")
     
@@ -48,12 +55,15 @@ def parse_cv_with_ai(raw_text: str) -> dict:
     try:
         response = model.generate_content(prompt)
         raw_json = response.text.strip()
-        
+        logger.info(f"Gemini response length: {len(raw_json)}")
+
         # Clean potential markdown wrapping
         raw_json = raw_json.replace("```json", "").replace("```", "").strip()
-        
+
         return json.loads(raw_json)
     except json.JSONDecodeError:
+        logger.error(f"JSON parse failed. Raw response: {response.text[:500] if response else 'no response'}")
         return {"error": "parse_failed", "raw": response.text[:500] if response else ""}
     except Exception as e:
+        logger.error(f"Gemini API error: {type(e).__name__}: {e}")
         return {"error": str(e)}

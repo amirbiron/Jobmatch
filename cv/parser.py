@@ -1,4 +1,7 @@
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 
 def extract_with_pdfplumber(pdf_path: str) -> str:
@@ -82,18 +85,22 @@ def clean_text(text: str) -> str:
 
 def smart_extract(pdf_path: str) -> str:
     """Try multiple methods, pick the best result"""
-    
+
     # Method 1 — pdfplumber
     text_plumber = extract_with_pdfplumber(pdf_path)
-    
+    logger.info(f"pdfplumber extracted {len(text_plumber)} chars")
+
     # Method 2 — PyMuPDF
     text_pymupdf = extract_with_pymupdf(pdf_path)
-    
+    logger.info(f"PyMuPDF extracted {len(text_pymupdf)} chars")
+
     # Pick the longer one
     best = text_plumber if len(text_plumber) > len(text_pymupdf) else text_pymupdf
-    
+
     # If too short — probably a scanned/image PDF → use Claude Vision
     if len(best.strip()) < 100:
+        logger.info("Text too short, falling back to Claude Vision OCR")
         best = extract_with_vision(pdf_path)
-    
+        logger.info(f"Vision extracted {len(best)} chars")
+
     return clean_text(best)

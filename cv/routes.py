@@ -1,9 +1,11 @@
 from flask import Blueprint, request, jsonify, current_app
 from auth.middleware import login_required
 from datetime import datetime
+import logging
 import os
 import uuid
 
+logger = logging.getLogger(__name__)
 cv_bp = Blueprint("cv", __name__)
 
 
@@ -40,14 +42,19 @@ def upload_cv():
     
     # Step 1: Extract text
     raw_text = smart_extract(filepath)
-    
+    logger.info(f"PDF extracted text length: {len(raw_text.strip())} chars")
+
     if len(raw_text.strip()) < 50:
         return jsonify({"error": "לא הצלחנו לקרוא את ה-PDF. נסה להעלות גרסת טקסט."}), 400
-    
+
     # Step 2: AI parsing
     parsed = parse_cv_with_ai(raw_text)
-    
+
     if "error" in parsed:
+        err = parsed["error"]
+        logger.error(f"CV AI parsing failed: {err}")
+        if err == "missing_api_key":
+            return jsonify({"error": "שגיאת הגדרות שרת — מפתח API חסר"}), 500
         return jsonify({"error": "שגיאה בניתוח קורות החיים, נסה שוב"}), 500
     
     # Save temp parsed data for preview

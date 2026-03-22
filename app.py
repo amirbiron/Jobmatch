@@ -4,7 +4,10 @@ from config import Config
 from auth.routes import auth_bp
 from cv.routes import cv_bp
 from dashboard.routes import dash_bp
+import logging
 import os
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 
 def create_app():
     app = Flask(__name__)
